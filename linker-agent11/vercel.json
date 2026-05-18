@@ -1,0 +1,11 @@
+{
+  "functions": {
+    "api/**/*.ts": {
+      "runtime": "vercel-node@22",
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/$1" }
+  ]
+}
