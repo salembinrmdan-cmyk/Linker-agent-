@@ -4,7 +4,7 @@
   "buildCommand": "npm --prefix linker-agent11 run build",
   "outputDirectory": "linker-agent11/dist",
   "functions": {
-    "api/**/*.ts": {
+    "api/index.ts": {
       "maxDuration": 30
     }
   },
