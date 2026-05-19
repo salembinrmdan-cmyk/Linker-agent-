@@ -199,6 +199,28 @@ export function createServerApp() {
 
     const result = await testWhapiConnection(apiUrl, apiKey);
     if (!result.ok) {
+    try {
+      const result = await fetch(`${apiUrl}/settings`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!result.ok) {
+        response.status(502).json({
+          ok: false,
+          connected: false,
+          provider,
+          apiUrl,
+          message: `Provider responded with status ${result.status}`,
+        });
+        return;
+      }
+
+      response.json({ ok: true, connected: true, provider, apiUrl });
+    } catch (error) {
       response.status(502).json({
         ok: false,
         connected: false,
@@ -216,6 +238,9 @@ export function createServerApp() {
       apiUrl,
       message: `Connection successful via ${result.path}`,
     });
+        message: error instanceof Error ? error.message : 'Connection failed',
+      });
+    }
   });
 
   return app;
