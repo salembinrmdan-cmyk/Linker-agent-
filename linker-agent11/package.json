@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "vite",
     "dev:server": "tsx watch server/index.ts",
-    "build": "tsc -b && vite build",
-    "vercel-build": "npx prisma generate && npx prisma db push && tsc -b && vite build",
+    "build": "npx prisma db push --skip-generate && tsc -b && vite build",
+    "vercel-build": "npx prisma db push --skip-generate && tsc -b && vite build",
     "typecheck": "tsc -b",
     "lint": "eslint .",
     "test": "tsx --test server/*.test.ts",
