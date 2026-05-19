@@ -1389,7 +1389,14 @@ function CampaignsPage() {
 
 function SettingsPage() {
   const [profile, setProfile] = useState({ name: 'أحمد محمد سالم', email: 'ahmed@linker-intelligence.com', org: 'لينكر ماركت للأبحاث', lang: 'العربية (Yemen)' });
-  const [waba, setWaba] = useState({ provider: 'meta', apiKey: '', phoneId: '', businessId: '', webhookToken: 'linker-webhook-secret' });
+  const [waba, setWaba] = useState({
+    provider: 'custom',
+    apiUrl: 'https://gate.whapi.cloud/',
+    apiKey: '',
+    phoneId: '',
+    businessId: '',
+    webhookToken: 'linker-webhook-secret',
+  });
   const [webhookUrl, setWebhookUrl] = useState('https://linker-agent.com/api/integrations/survey-agent/webhook');
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{message:string;type:'success'|'error'}|null>(null);
@@ -1414,9 +1421,10 @@ function SettingsPage() {
     fetch('/api/admin/settings/test-whatsapp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider: waba.provider, apiKey: waba.apiKey }),
-    }).then(r => r.json()).then(data => {
-      setToast({ message: data.ok ? '✅ تم الاتصال بنجاح — مزود الخدمة متصل ويعمل' : '❌ فشل الاتصال — تحقق من المفتاح', type: data.ok ? 'success' : 'error' });
+      body: JSON.stringify({ provider: waba.provider, apiUrl: waba.apiUrl, apiKey: waba.apiKey }),
+    }).then(async r => ({ status: r.status, data: await r.json() })).then(({ status, data }) => {
+      const message = data?.message || (data?.ok ? '✅ تم الاتصال بنجاح — مزود الخدمة متصل ويعمل' : '❌ فشل الاتصال — تحقق من بيانات الربط');
+      setToast({ message: status < 400 ? message : `❌ ${message}`, type: data?.ok ? 'success' : 'error' });
     }).catch(() => setToast({ message: '❌ فشل الاتصال بالخادم', type: 'error' }));
   };
 
@@ -1463,6 +1471,10 @@ function SettingsPage() {
           <label>
             <span>API Key / Access Token</span>
             <input value={waba.apiKey} onChange={e => setWaba({...waba,apiKey:e.target.value})} type="password" placeholder="EAAx..." dir="ltr" style={{fontFamily:'monospace',fontSize:12}} />
+          </label>
+          <label>
+            <span>API URL</span>
+            <input value={waba.apiUrl} onChange={e => setWaba({...waba,apiUrl:e.target.value})} placeholder="https://gate.whapi.cloud/" dir="ltr" style={{fontFamily:'monospace',fontSize:12}} />
           </label>
           <label>
             <span>Phone Number ID</span>

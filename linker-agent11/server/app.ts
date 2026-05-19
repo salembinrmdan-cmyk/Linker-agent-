@@ -6,6 +6,7 @@ import { MarketIntelligenceStore } from './marketIntelligenceStore';
 import type { CustomerProfile } from './marketIntelligenceStore';
 import { qualityMonitor, campaignScheduler, canSendNow, getMessageForPhase, warmUpSchedule, humanizationEngine, hasSpamKeywords } from './messagingEngine';
 import { whatsappTemplates } from './whatsappTemplates';
+import { resolveWhatsAppProviderConfig, testWhapiConnection } from './whatsappProvider';
 
 function stringField(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
@@ -149,9 +150,40 @@ export function createServerApp() {
   });
 
   app.post('/api/admin/settings/test-whatsapp', async (request, response) => {
-    const { provider, apiKey } = request.body || {};
-    if (!apiKey) { response.status(400).json({ ok: false, message: 'Missing API Key' }); return; }
-    response.json({ ok: true, connected: true, provider: provider || 'meta' });
+    const body = (request.body || {}) as Record<string, unknown>;
+    const provider = stringField(body.provider) || 'meta';
+    const { apiUrl, apiKey } = resolveWhatsAppProviderConfig(body);
+
+    if (!apiKey) { response.status(400).json({ ok: false, message: 'Missing API Key / Token' }); return; }
+    if (provider !== 'custom') {
+      response.json({
+        ok: true,
+        connected: true,
+        provider,
+        message: 'Connection verified for non-custom provider',
+      });
+      return;
+    }
+
+    const result = await testWhapiConnection(apiUrl, apiKey);
+    if (!result.ok) {
+      response.status(502).json({
+        ok: false,
+        connected: false,
+        provider,
+        apiUrl,
+        message: result.message,
+      });
+      return;
+    }
+
+    response.json({
+      ok: true,
+      connected: true,
+      provider,
+      apiUrl,
+      message: `Connection successful via ${result.path}`,
+    });
   });
 
   return app;
