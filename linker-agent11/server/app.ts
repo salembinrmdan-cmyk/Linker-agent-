@@ -11,6 +11,48 @@ function stringField(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function normalizeBaseUrl(url: string): string {
+  return url.endsWith('/') ? url.slice(0, -1) : url;
+}
+
+function resolveWhatsAppProviderConfig(payload: Record<string, unknown>) {
+  const apiUrlFromBody = stringField(payload.apiUrl);
+  const apiKeyFromBody = stringField(payload.apiKey);
+  const envUrl = stringField(process.env.WHATSAPP_API_URL);
+  const envToken = stringField(process.env.WHATSAPP_API_TOKEN);
+
+  return {
+    apiUrl: normalizeBaseUrl(apiUrlFromBody || envUrl || 'https://gate.whapi.cloud/'),
+    apiKey: apiKeyFromBody || envToken,
+  };
+}
+
+async function testWhapiConnection(apiUrl: string, apiKey: string) {
+  const candidatePaths = ['/health', '/settings'];
+  const headers = {
+    Authorization: `Bearer ${apiKey}`,
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+  };
+
+  let lastStatus: number | null = null;
+  let lastError = '';
+  for (const path of candidatePaths) {
+    try {
+      const result = await fetch(`${apiUrl}${path}`, { method: 'GET', headers });
+      if (result.ok) {
+        return { ok: true, path, status: result.status };
+      }
+      lastStatus = result.status;
+      lastError = `Provider responded with status ${result.status} on ${path}`;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : 'Connection failed';
+    }
+  }
+
+  return { ok: false, status: lastStatus, message: lastError || 'Connection failed' };
+}
+
 function createCorsOptions() {
   return { credentials: true, origin(_origin: string | undefined, callback: (err: Error | null, ok?: boolean) => void) { callback(null, true); } };
 }
@@ -149,9 +191,31 @@ export function createServerApp() {
   });
 
   app.post('/api/admin/settings/test-whatsapp', async (request, response) => {
-    const { provider, apiKey } = request.body || {};
-    if (!apiKey) { response.status(400).json({ ok: false, message: 'Missing API Key' }); return; }
-    response.json({ ok: true, connected: true, provider: provider || 'meta' });
+    const body = (request.body || {}) as Record<string, unknown>;
+    const provider = stringField(body.provider) || 'custom';
+    const { apiUrl, apiKey } = resolveWhatsAppProviderConfig(body);
+
+    if (!apiKey) { response.status(400).json({ ok: false, message: 'Missing API Key / Token' }); return; }
+
+    const result = await testWhapiConnection(apiUrl, apiKey);
+    if (!result.ok) {
+      response.status(502).json({
+        ok: false,
+        connected: false,
+        provider,
+        apiUrl,
+        message: result.message,
+      });
+      return;
+    }
+
+    response.json({
+      ok: true,
+      connected: true,
+      provider,
+      apiUrl,
+      message: `Connection successful via ${result.path}`,
+    });
   });
 
   return app;
