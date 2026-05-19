@@ -1,4 +1,7 @@
 {
+  "buildCommand": "npx prisma generate && npx prisma db push && tsc -b && vite build",
+  "outputDirectory": "dist",
+  "installCommand": "npm install",
   "functions": {
     "api/**/*.ts": {
       "runtime": "vercel-node@22",
