@@ -28,6 +28,7 @@
     "lucide-react": "^1.16.0",
     "postcss": "^8.5.14",
     "prisma": "^6.0.0",
+    "railway": "^2.0.17",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-router-dom": "^7.15.1",
