@@ -4,7 +4,6 @@
   "installCommand": "npm install --include=optional --optional=true",
   "functions": {
     "api/**/*.ts": {
-      "runtime": "vercel-node@22",
       "maxDuration": 30
     }
   },
