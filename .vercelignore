@@ -1,6 +1,7 @@
 *
-!api/
+!api
 !api/**
-!linker-agent11/
+!linker-agent11
 !linker-agent11/**
+!package.json
 !vercel.json
