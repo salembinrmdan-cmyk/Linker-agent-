@@ -15,8 +15,94 @@ function normalizeBaseUrl(url: string): string {
   return url.endsWith('/') ? url.slice(0, -1) : url;
 }
 
+function isWhapiProvider(apiUrl: string): boolean {
+  return apiUrl.includes('whapi.cloud') || apiUrl.includes('whapi.io');
+}
+
+function parseWhapiError(status: number, body: string): string {
+  try {
+    const parsed = JSON.parse(body);
+    const msg = parsed?.error?.message || parsed?.message || parsed?.error || '';
+    if (msg) return String(msg);
+  } catch { /* not JSON */ }
+
+  if (status === 401) return 'Token غير صالح أو منتهي الصلاحية — تحقق من API Token في لوحة whapi.cloud';
+  if (status === 403) return 'الوصول مرفوض — تأكد من صحة الـ Token وأن القناة مفعّلة في لوحة whapi.cloud';
+  if (status === 404) return 'القناة غير موجودة — تحقق من أن الـ Token مرتبط بقناة نشطة';
+  if (status === 422) return 'بيانات غير صالحة — تحقق من إعدادات القناة';
+  if (status === 429) return 'تجاوزت حد الطلبات — انتظر قليلاً ثم أعد المحاولة';
+  if (status >= 500) return 'خطأ في خادم whapi.cloud — حاول مرة أخرى لاحقاً';
+  return `رمز الحالة: ${status}`;
+}
+
+async function testWhapiConnection(apiUrl: string, apiKey: string) {
+  const attempts: Array<{ path: string; authMode: string; ok: boolean; status?: number; error?: string; body?: string }> = [];
+
+  // whapi uses /health as the primary health-check endpoint
+  // wakeup=false prevents launching the channel just for a test
+  const testPath = '/health';
+  const testUrl = `${apiUrl}${testPath}?wakeup=false`;
+
+  for (const candidate of [
+    { authMode: 'bearer' as const, headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' } },
+    { authMode: 'query_token' as const, headers: { Accept: 'application/json' }, useQueryToken: true },
+  ]) {
+    const url = candidate.useQueryToken
+      ? `${apiUrl}${testPath}?wakeup=false&token=${encodeURIComponent(apiKey)}`
+      : testUrl;
+    try {
+      const result = await fetch(url, {
+        method: 'GET',
+        signal: AbortSignal.timeout(10000),
+        headers: candidate.headers,
+      });
+
+      const bodyText = await result.text();
+
+      if (result.ok) {
+        let channelStatus = 'متصل';
+        try {
+          const parsed = JSON.parse(bodyText);
+          if (parsed?.status) channelStatus = parsed.status;
+          if (parsed?.deviceStatus) channelStatus = parsed.deviceStatus;
+        } catch { /* ignore */ }
+        attempts.push({ path: testPath, authMode: candidate.authMode, ok: true, status: result.status });
+        return {
+          ok: true as const,
+          path: testPath,
+          status: result.status,
+          authMode: candidate.authMode,
+          channelStatus,
+          attempts,
+        };
+      }
+
+      const errorMessage = parseWhapiError(result.status, bodyText);
+      attempts.push({ path: testPath, authMode: candidate.authMode, ok: false, status: result.status, body: errorMessage });
+
+      // 401/403 with first auth mode → try next; other errors → stop
+      if (result.status !== 401 && result.status !== 403) break;
+
+    } catch (err) {
+      const errorMsg = err instanceof Error && err.name === 'TimeoutError'
+        ? 'انتهت مهلة الاتصال (10 ثانية) — تحقق من اتصالك بالإنترنت'
+        : 'خطأ في الشبكة — تعذّر الوصول إلى gate.whapi.cloud';
+      attempts.push({ path: testPath, authMode: candidate.authMode, ok: false, error: errorMsg });
+    }
+  }
+
+  const lastAttempt = attempts[attempts.length - 1];
+  const message = lastAttempt?.body || lastAttempt?.error || 'فشل الاتصال بـ whapi.cloud';
+  return { ok: false as const, message, attempts };
+}
+
 async function testCustomProviderConnection(apiUrl: string, apiKey: string) {
-  const candidatePaths = ['/health', '/settings', '/chats', '/status'];
+  // Use whapi-specific handler for whapi.cloud
+  if (isWhapiProvider(apiUrl)) {
+    return testWhapiConnection(apiUrl, apiKey);
+  }
+
+  const candidatePaths = ['/health', '/api/health', '/v1/health', '/status', '/ping'];
   const attempts: Array<{ path: string; authMode: 'bearer' | 'query_token' | 'token_header' | 'x_api_key'; ok: boolean; status?: number; error?: string; body?: string }> = [];
   let lastStatus: number | null = null;
 
@@ -227,7 +313,8 @@ export function createServerApp() {
       connected: true,
       provider: currentProvider,
       apiUrl: normalizedUrl,
-      message: `Connection successful via ${result.path} (${result.authMode})`,
+      message: `✅ تم الاتصال بنجاح عبر ${result.path} (${result.authMode})${"channelStatus" in result && result.channelStatus && result.channelStatus !== "متصل" ? ` — حالة القناة: ${result.channelStatus}` : ""}`,
+      channelStatus: "channelStatus" in result ? result.channelStatus : undefined,
       status: result.status,
       attempts: result.attempts,
     });
