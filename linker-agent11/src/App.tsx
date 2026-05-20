@@ -1324,8 +1324,116 @@ function CampaignsPage() {
   const [toast, setToast] = useState<{message:string;type:'success'|'error'}|null>(null);
   const [showLaunchModal, setShowLaunchModal] = useState(false);
   const [uploadedFile, setUploadedFile] = useState<File|null>(null);
+  const [customers, setCustomers] = useState<{phone:string;name:string;city:string}[]>([]);
+  const [progress, setProgress] = useState<{sent:number;failed:number;total:number}|null>(null);
 
-  const handleLaunch = () => { setLaunching(true); setTimeout(() => { setLaunching(false); setShowLaunchModal(false); setToast({message:'تم إطلاق الحملة بنجاح 🚀',type:'success'}); }, 1500); };
+  // Parse CSV/Excel file
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadedFile(file);
+    const text = await file.text();
+    const lines = text.trim().split('\n').filter(l => l.trim());
+    // Skip header row
+    const parsed = lines.slice(1).map(line => {
+      const cols = line.split(',').map(c => c.trim().replace(/"/g, ''));
+      // Support both orders: phone,name,city OR city,name,phone (based on template)
+      // Template header: رقم الهاتف, الاسم, المدينة
+      const phone = cols[0]?.replace(/\s+/g, '') || '';
+      const name  = cols[1] || '';
+      const city  = cols[2] || '';
+      return { phone, name, city };
+    }).filter(r => r.phone.length >= 9);
+    setCustomers(parsed);
+  };
+
+  // Get saved whapi settings from localStorage (saved by SettingsPage)
+  const getWabaSettings = () => {
+    try {
+      const saved = localStorage.getItem('linker_waba_settings');
+      if (saved) return JSON.parse(saved) as {apiUrl:string;apiKey:string};
+    } catch { /**/ }
+    return { apiUrl: 'https://gate.whapi.cloud', apiKey: '' };
+  };
+
+  const handleLaunch = async () => {
+    if (customers.length === 0) {
+      setToast({ message: 'لا يوجد عملاء في الملف المرفوع', type: 'error' });
+      return;
+    }
+    const { apiUrl, apiKey } = getWabaSettings();
+    if (!apiKey) {
+      setToast({ message: '⚠️ الرجاء إدخال API Key في صفحة الإعدادات أولاً', type: 'error' });
+      return;
+    }
+
+    setLaunching(true);
+    setShowLaunchModal(false);
+    setProgress({ sent: 0, failed: 0, total: customers.length });
+
+    let sent = 0;
+    let failed = 0;
+    const baseUrl = apiUrl.endsWith('/') ? apiUrl.slice(0, -1) : apiUrl;
+
+    for (const customer of customers) {
+      try {
+        // Format phone: ensure it starts with country code
+        const phone = customer.phone.replace(/\D/g, '');
+        const formattedPhone = phone.startsWith('00') ? phone.slice(2) : phone;
+
+        // Survey message
+        const message = `مرحباً ${customer.name} 👋
+
+نحن فريق *لينكر لوجستيكس* ونسعد بخدمتك.
+
+نودّ معرفة رأيك في تجربة الشحن والتسوق الخاصة بك عبر رسالة قصيرة لا تستغرق أكثر من دقيقتين.
+
+مشاركتك تساعدنا في تحسين خدماتك 🙏
+
+للبدء، أجب على هذا السؤال:
+*كيف تُقيّم تجربة الشحن الأخيرة من ${customer.city || 'مدينتك'}؟*
+
+1️⃣ ممتازة
+2️⃣ جيدة
+3️⃣ متوسطة
+4️⃣ سيئة`;
+
+        const resp = await fetch(`${baseUrl}/messages/text`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          body: JSON.stringify({
+            to: formattedPhone,
+            body: message,
+          }),
+        });
+
+        if (resp.ok) {
+          sent++;
+        } else {
+          failed++;
+          console.error(`Failed ${customer.phone}:`, resp.status);
+        }
+      } catch (err) {
+        failed++;
+        console.error(`Error sending to ${customer.phone}:`, err);
+      }
+
+      setProgress({ sent, failed, total: customers.length });
+      // Delay between messages to avoid spam detection (2-4 seconds)
+      await new Promise(r => setTimeout(r, 2000 + Math.random() * 2000));
+    }
+
+    setLaunching(false);
+    setToast({
+      message: `✅ اكتمل الإرسال: ${sent} رسالة أُرسلت${failed > 0 ? `، ${failed} فشلت` : ''}`,
+      type: sent > 0 ? 'success' : 'error'
+    });
+    setProgress(null);
+  };
 
   return (
     <div className="page-stack">
@@ -1345,13 +1453,13 @@ function CampaignsPage() {
         <Card title="إعداد حملة سريعة" subtitle="رفع قائمة واختيار قالب">
           <div className="upload-card">
             {uploadedFile ? (
-              <><CheckCircle2 size={32} color="#0d9488" /><strong>تم رفع الملف بنجاح</strong><span dir="ltr">{uploadedFile.name}</span></>
+              <><CheckCircle2 size={32} color="#0d9488" /><strong>تم رفع الملف بنجاح</strong><span dir="ltr">{uploadedFile.name}</span><span style={{color:'#0d9488',fontWeight:'bold'}}>{customers.length} عميل جاهز للإرسال</span></>
             ) : (
               <><UploadCloud size={32} /><strong>رفع قائمة العملاء</strong><span>CSV / Excel — يجب أن يحتوي على: رقم الهاتف، الاسم، المدينة</span></>
             )}
             <label className="btn secondary" style={{marginTop:8,cursor:'pointer'}}>
               <Download size={14} /> اختر ملف
-              <input type="file" hidden accept=".csv,.xlsx" onChange={e => { if (e.target.files?.[0]) setUploadedFile(e.target.files[0]); }} />
+              <input type="file" hidden accept=".csv,.xlsx" onChange={handleFileChange} />
             </label>
             <button className="btn secondary" onClick={downloadCampaignTemplate} style={{marginTop:4}}><Download size={14} /> القالب الفارغ</button>
           </div>
@@ -1376,12 +1484,37 @@ function CampaignsPage() {
         </div>
       </Card>
       <Modal open={showLaunchModal} onClose={()=>setShowLaunchModal(false)} title="تأكيد إطلاق الحملة">
-        <p style={{marginBottom:16,color:'#64748b'}}>سيتم إرسال الاستبيان إلى {uploadedFile ? 'قائمة العملاء المرفوعة' : 'جميع العملاء النشطين'}. هل تريد المتابعة؟</p>
+        <div style={{marginBottom:16}}>
+          <p style={{color:'#64748b',marginBottom:8}}>سيتم إرسال استبيان رضا العملاء إلى <strong style={{color:'#0d9488'}}>{customers.length} عميل</strong> عبر WhatsApp.</p>
+          {customers.length > 0 && (
+            <div style={{background:'#f8fafc',borderRadius:8,padding:'8px 12px',maxHeight:140,overflowY:'auto',fontSize:12}}>
+              {customers.slice(0,5).map((c,i) => (
+                <div key={i} style={{padding:'3px 0',borderBottom:'1px solid #e2e8f0',display:'flex',gap:12}}>
+                  <span dir="ltr" style={{color:'#64748b'}}>{c.phone}</span>
+                  <span>{c.name}</span>
+                  <span style={{color:'#94a3b8'}}>{c.city}</span>
+                </div>
+              ))}
+              {customers.length > 5 && <div style={{color:'#94a3b8',paddingTop:4}}>و {customers.length - 5} آخرين...</div>}
+            </div>
+          )}
+          <p style={{marginTop:10,fontSize:12,color:'#f59e0b'}}>⚠️ سيتم الإرسال بفاصل 2-4 ثوانٍ بين كل رسالة لتجنب الحظر.</p>
+        </div>
         <div className="action-row" style={{justifyContent:'flex-end'}}>
           <button className="btn secondary" onClick={()=>setShowLaunchModal(false)}>إلغاء</button>
-          <button className="btn primary" onClick={handleLaunch} disabled={launching}>{launching?'⏳ جاري الإطلاق...':'✅ تأكيد الإطلاق'}</button>
+          <button className="btn primary" onClick={handleLaunch} disabled={launching || customers.length === 0}>{launching?'⏳ جاري الإطلاق...':'🚀 إطلاق الحملة'}</button>
         </div>
       </Modal>
+      {/* Progress indicator while sending */}
+      {progress && (
+        <div style={{position:'fixed',bottom:24,left:'50%',transform:'translateX(-50%)',background:'#1e293b',color:'white',borderRadius:12,padding:'12px 24px',zIndex:9999,display:'flex',gap:16,alignItems:'center',boxShadow:'0 8px 32px rgba(0,0,0,0.3)'}}>
+          <div style={{width:120,height:6,background:'#334155',borderRadius:3}}>
+            <div style={{width:`${(progress.sent+progress.failed)/progress.total*100}%`,height:'100%',background:'#0d9488',borderRadius:3,transition:'width 0.3s'}} />
+          </div>
+          <span style={{fontSize:13}}>إرسال {progress.sent + progress.failed} / {progress.total}</span>
+          {progress.failed > 0 && <span style={{color:'#f87171',fontSize:12}}>{progress.failed} فشل</span>}
+        </div>
+      )}
       {toast && <Toast message={toast.message} type={toast.type} onClose={()=>setToast(null)}/>}
     </div>
   );
@@ -1396,6 +1529,8 @@ function SettingsPage() {
 
   const handleSaveAll = () => {
     setSaving(true);
+    // Save waba to localStorage so CampaignsPage can use it
+    try { localStorage.setItem('linker_waba_settings', JSON.stringify({ apiUrl: waba.apiUrl, apiKey: waba.apiKey })); } catch { /**/ }
     fetch('/api/admin/settings/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
