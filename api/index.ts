@@ -3,7 +3,6 @@
  * IMPORTANT: This file imports from server/app.ts ONLY (NOT server/index.ts)
  * server/index.ts contains app.listen() which crashes in Serverless environments
  */
-import 'dotenv/config';
 import { createServerApp } from '../linker-agent11/server/app';
 
 // Singleton — created once per cold start
