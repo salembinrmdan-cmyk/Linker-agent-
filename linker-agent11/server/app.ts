@@ -16,14 +16,16 @@ function normalizeBaseUrl(url: string): string {
 }
 
 async function testCustomProviderConnection(apiUrl: string, apiKey: string) {
-  const candidatePaths = ['/health', '/settings'];
-  const attempts: Array<{ path: string; authMode: 'bearer' | 'query_token'; ok: boolean; status?: number; error?: string }> = [];
+  const candidatePaths = ['/health', '/settings', '/chats', '/status'];
+  const attempts: Array<{ path: string; authMode: 'bearer' | 'query_token' | 'token_header' | 'x_api_key'; ok: boolean; status?: number; error?: string; body?: string }> = [];
   let lastStatus: number | null = null;
 
   for (const path of candidatePaths) {
     const candidates = [
       { authMode: 'bearer' as const, url: `${apiUrl}${path}`, headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' } },
       { authMode: 'query_token' as const, url: `${apiUrl}${path}?token=${encodeURIComponent(apiKey)}`, headers: { Accept: 'application/json' } },
+      { authMode: 'token_header' as const, url: `${apiUrl}${path}`, headers: { token: apiKey, Accept: 'application/json' } },
+      { authMode: 'x_api_key' as const, url: `${apiUrl}${path}`, headers: { 'x-api-key': apiKey, Accept: 'application/json' } },
     ];
 
     for (const candidate of candidates) {
@@ -34,11 +36,12 @@ async function testCustomProviderConnection(apiUrl: string, apiKey: string) {
           headers: candidate.headers,
         });
 
+        const bodyText = await result.text();
         if (result.ok) {
           attempts.push({ path, authMode: candidate.authMode, ok: true, status: result.status });
           return { ok: true as const, path, status: result.status, authMode: candidate.authMode, attempts };
         }
-        attempts.push({ path, authMode: candidate.authMode, ok: false, status: result.status });
+        attempts.push({ path, authMode: candidate.authMode, ok: false, status: result.status, body: bodyText.slice(0, 120) });
         lastStatus = result.status;
       } catch {
         attempts.push({ path, authMode: candidate.authMode, ok: false, error: 'Network error or timeout' });
