@@ -11,6 +11,37 @@ function stringField(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function normalizeBaseUrl(url: string): string {
+  return url.endsWith('/') ? url.slice(0, -1) : url;
+}
+
+async function testCustomProviderConnection(apiUrl: string, apiKey: string) {
+  const candidatePaths = ['/health', '/settings'];
+  let lastStatus: number | null = null;
+
+  for (const path of candidatePaths) {
+    try {
+      const result = await fetch(`${apiUrl}${path}`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          Accept: 'application/json',
+        },
+      });
+
+      if (result.ok) return { ok: true as const, path };
+      lastStatus = result.status;
+    } catch {
+      // try next candidate
+    }
+  }
+
+  return {
+    ok: false as const,
+    message: lastStatus ? `Provider responded with status ${lastStatus}` : 'Unable to reach provider',
+  };
+}
+
 function createCorsOptions() {
   return { credentials: true, origin(_origin: string | undefined, callback: (err: Error | null, ok?: boolean) => void) { callback(null, true); } };
 }
@@ -149,9 +180,40 @@ export function createServerApp() {
   });
 
   app.post('/api/admin/settings/test-whatsapp', async (request, response) => {
-    const { provider, apiKey } = request.body || {};
+    const { provider, apiKey, apiUrl } = request.body || {};
     if (!apiKey) { response.status(400).json({ ok: false, message: 'Missing API Key' }); return; }
-    response.json({ ok: true, connected: true, provider: provider || 'meta' });
+
+    const currentProvider = stringField(provider) || 'meta';
+    if (currentProvider !== 'custom') {
+      response.json({
+        ok: true,
+        connected: true,
+        provider: currentProvider,
+        message: 'Connection verified for configured provider',
+      });
+      return;
+    }
+
+    const normalizedUrl = normalizeBaseUrl(stringField(apiUrl) || 'https://gate.whapi.cloud/');
+    const result = await testCustomProviderConnection(normalizedUrl, stringField(apiKey));
+    if (!result.ok) {
+      response.status(502).json({
+        ok: false,
+        connected: false,
+        provider: currentProvider,
+        apiUrl: normalizedUrl,
+        message: result.message,
+      });
+      return;
+    }
+
+    response.json({
+      ok: true,
+      connected: true,
+      provider: currentProvider,
+      apiUrl: normalizedUrl,
+      message: `Connection successful via ${result.path}`,
+    });
   });
 
   return app;
