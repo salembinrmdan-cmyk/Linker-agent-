@@ -1,30 +1,11 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-
-// Lazy imports — loaded only when needed so a missing DATABASE_URL
-// won't crash the entire app at cold-start (e.g. test-whatsapp endpoint)
-let _ConversationEngine: typeof import('./conversationEngine') | null = null;
-let _MarketIntelligenceStore: typeof import('./marketIntelligenceStore') | null = null;
-let _messagingEngine: typeof import('./messagingEngine') | null = null;
-let _whatsappTemplates: typeof import('./whatsappTemplates') | null = null;
-
-async function getConversationEngine() {
-  if (!_ConversationEngine) _ConversationEngine = await import('./conversationEngine');
-  return _ConversationEngine;
-}
-async function getMarketStore() {
-  if (!_MarketIntelligenceStore) _MarketIntelligenceStore = await import('./marketIntelligenceStore');
-  return _MarketIntelligenceStore;
-}
-async function getMessagingEngine() {
-  if (!_messagingEngine) _messagingEngine = await import('./messagingEngine');
-  return _messagingEngine;
-}
-async function getWhatsappTemplates() {
-  if (!_whatsappTemplates) _whatsappTemplates = await import('./whatsappTemplates');
-  return _whatsappTemplates;
-}
+import { ConversationEngine, getSurveyConfig, updateSurveyConfig, resetSurveyConfig } from './conversationEngine';
+import { MarketIntelligenceStore } from './marketIntelligenceStore';
+import type { CustomerProfile } from './marketIntelligenceStore';
+import { qualityMonitor, campaignScheduler, canSendNow, getMessageForPhase, warmUpSchedule, humanizationEngine, hasSpamKeywords } from './messagingEngine';
+import { whatsappTemplates } from './whatsappTemplates';
 
 function stringField(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
