@@ -1409,21 +1409,26 @@ function SettingsPage() {
     });
   };
 
-  const handleTestConnection = () => {
+  const handleTestConnection = async () => {
     setToast({ message: 'جاري اختبار الاتصال بمزود WhatsApp API...', type: 'success' });
-    fetch('/api/admin/settings/test-whatsapp', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider: waba.provider, apiUrl: waba.apiUrl, apiKey: waba.apiKey }),
-    }).then(async r => ({ status: r.status, data: await r.json() })).then(({ status, data }) => {
-      const attemptsSummary = Array.isArray(data?.attempts)
-        ? data.attempts.map((a: { path?: string; authMode?: string; status?: number; error?: string; body?: string }) =>
-            `${a.path || 'unknown'}[${a.authMode || 'n/a'}]:${a.status || a.error || 'failed'}${a.body ? `(${a.body})` : ''}`).join(' | ')
-        : '';
-      const baseMessage = data?.message || (data?.ok ? '✅ تم الاتصال بنجاح — مزود الخدمة متصل ويعمل' : '❌ فشل الاتصال — تحقق من بيانات الربط');
-      const details = attemptsSummary ? ` — ${attemptsSummary}` : '';
-      setToast({ message: status < 400 ? `${baseMessage}${details}` : `❌ ${baseMessage}${details}`, type: data?.ok ? 'success' : 'error' });
-    }).catch(() => setToast({ message: '❌ فشل الاتصال بالخادم', type: 'error' }));
+    try {
+      const r = await fetch('/api/test-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: waba.provider, apiUrl: waba.apiUrl, apiKey: waba.apiKey }),
+      });
+      const text = await r.text();
+      let data: Record<string, unknown> = {};
+      try { data = JSON.parse(text); } catch { 
+        // Server returned non-JSON (HTML error page or crash)
+        setToast({ message: `❌ خطأ في الخادم (${r.status}) — ${text.slice(0, 120)}`, type: 'error' });
+        return;
+      }
+      const baseMessage = (data?.message as string) || (data?.ok ? '✅ تم الاتصال بنجاح' : '❌ فشل الاتصال — تحقق من بيانات الربط');
+      setToast({ message: baseMessage, type: data?.ok ? 'success' : 'error' });
+    } catch (err) {
+      setToast({ message: `❌ تعذّر الوصول للخادم — ${err instanceof Error ? err.message : 'network error'}`, type: 'error' });
+    }
   };
 
   return (

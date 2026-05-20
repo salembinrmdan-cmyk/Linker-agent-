@@ -1,11 +1,30 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { ConversationEngine, getSurveyConfig, updateSurveyConfig, resetSurveyConfig } from './conversationEngine';
-import { MarketIntelligenceStore } from './marketIntelligenceStore';
-import type { CustomerProfile } from './marketIntelligenceStore';
-import { qualityMonitor, campaignScheduler, canSendNow, getMessageForPhase, warmUpSchedule, humanizationEngine, hasSpamKeywords } from './messagingEngine';
-import { whatsappTemplates } from './whatsappTemplates';
+
+// Lazy imports — loaded only when needed so a missing DATABASE_URL
+// won't crash the entire app at cold-start (e.g. test-whatsapp endpoint)
+let _ConversationEngine: typeof import('./conversationEngine') | null = null;
+let _MarketIntelligenceStore: typeof import('./marketIntelligenceStore') | null = null;
+let _messagingEngine: typeof import('./messagingEngine') | null = null;
+let _whatsappTemplates: typeof import('./whatsappTemplates') | null = null;
+
+async function getConversationEngine() {
+  if (!_ConversationEngine) _ConversationEngine = await import('./conversationEngine');
+  return _ConversationEngine;
+}
+async function getMarketStore() {
+  if (!_MarketIntelligenceStore) _MarketIntelligenceStore = await import('./marketIntelligenceStore');
+  return _MarketIntelligenceStore;
+}
+async function getMessagingEngine() {
+  if (!_messagingEngine) _messagingEngine = await import('./messagingEngine');
+  return _messagingEngine;
+}
+async function getWhatsappTemplates() {
+  if (!_whatsappTemplates) _whatsappTemplates = await import('./whatsappTemplates');
+  return _whatsappTemplates;
+}
 
 function stringField(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
@@ -277,6 +296,26 @@ export function createServerApp() {
   app.post('/api/admin/settings/save', async (request, response) => {
     const { profile, waba, webhookUrl } = request.body || {};
     response.json({ ok: true, saved: { profile, waba, webhookUrl } });
+  });
+
+  // Alias for Vercel standalone function — same handler, works in local dev too
+  app.post('/api/test-connection', async (request, response) => {
+    const { provider, apiKey, apiUrl } = request.body || {};
+    if (!apiKey) { response.status(400).json({ ok: false, message: 'Missing API Key' }); return; }
+    const currentProvider = stringField(provider) || 'meta';
+    if (currentProvider !== 'custom') {
+      response.json({ ok: true, connected: true, message: 'تم التحقق من المزود المحدد' });
+      return;
+    }
+    const normalizedUrl = normalizeBaseUrl(stringField(apiUrl) || 'https://gate.whapi.cloud/');
+    const result = await testCustomProviderConnection(normalizedUrl, stringField(apiKey));
+    if (!result.ok) {
+      response.status(502).json({ ok: false, connected: false, message: result.message, attempts: result.attempts });
+      return;
+    }
+    const channelStatus = 'channelStatus' in result ? result.channelStatus : undefined;
+    const statusNote = channelStatus && channelStatus !== 'متصل' ? ` — حالة القناة: ${channelStatus}` : '';
+    response.json({ ok: true, connected: true, message: `✅ تم الاتصال بنجاح${statusNote}`, channelStatus, status: result.status, attempts: result.attempts });
   });
 
   app.post('/api/admin/settings/test-whatsapp', async (request, response) => {

@@ -3,11 +3,11 @@
   "outputDirectory": "dist",
   "installCommand": "npm install --include=optional --optional=true",
   "functions": {
-    "api/[...slug].ts": {
-      "maxDuration": 30
-    }
+    "api/test-connection.ts": { "maxDuration": 30 },
+    "api/[...slug].ts": { "maxDuration": 30 }
   },
   "rewrites": [
+    { "source": "/api/test-connection", "destination": "/api/test-connection" },
     { "source": "/api/:path*", "destination": "/api/:path*" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
