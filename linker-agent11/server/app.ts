@@ -17,29 +17,32 @@ function normalizeBaseUrl(url: string): string {
 
 async function testCustomProviderConnection(apiUrl: string, apiKey: string) {
   const candidatePaths = ['/health', '/settings'];
-  const attempts: Array<{ path: string; ok: boolean; status?: number; error?: string }> = [];
+  const attempts: Array<{ path: string; authMode: 'bearer' | 'query_token'; ok: boolean; status?: number; error?: string }> = [];
   let lastStatus: number | null = null;
 
   for (const path of candidatePaths) {
-    try {
-      const result = await fetch(`${apiUrl}${path}`, {
-        method: 'GET',
-        signal: AbortSignal.timeout(8000),
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          Accept: 'application/json',
-        },
-      });
+    const candidates = [
+      { authMode: 'bearer' as const, url: `${apiUrl}${path}`, headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' } },
+      { authMode: 'query_token' as const, url: `${apiUrl}${path}?token=${encodeURIComponent(apiKey)}`, headers: { Accept: 'application/json' } },
+    ];
 
-      if (result.ok) {
-        attempts.push({ path, ok: true, status: result.status });
-        return { ok: true as const, path, status: result.status, attempts };
+    for (const candidate of candidates) {
+      try {
+        const result = await fetch(candidate.url, {
+          method: 'GET',
+          signal: AbortSignal.timeout(8000),
+          headers: candidate.headers,
+        });
+
+        if (result.ok) {
+          attempts.push({ path, authMode: candidate.authMode, ok: true, status: result.status });
+          return { ok: true as const, path, status: result.status, authMode: candidate.authMode, attempts };
+        }
+        attempts.push({ path, authMode: candidate.authMode, ok: false, status: result.status });
+        lastStatus = result.status;
+      } catch {
+        attempts.push({ path, authMode: candidate.authMode, ok: false, error: 'Network error or timeout' });
       }
-      attempts.push({ path, ok: false, status: result.status });
-      lastStatus = result.status;
-    } catch {
-      attempts.push({ path, ok: false, error: 'Network error or timeout' });
-      // try next candidate
     }
   }
 
@@ -221,7 +224,7 @@ export function createServerApp() {
       connected: true,
       provider: currentProvider,
       apiUrl: normalizedUrl,
-      message: `Connection successful via ${result.path}`,
+      message: `Connection successful via ${result.path} (${result.authMode})`,
       status: result.status,
       attempts: result.attempts,
     });

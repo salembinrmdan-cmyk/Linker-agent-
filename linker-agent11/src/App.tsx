@@ -1417,8 +1417,8 @@ function SettingsPage() {
       body: JSON.stringify({ provider: waba.provider, apiUrl: waba.apiUrl, apiKey: waba.apiKey }),
     }).then(async r => ({ status: r.status, data: await r.json() })).then(({ status, data }) => {
       const attemptsSummary = Array.isArray(data?.attempts)
-        ? data.attempts.map((a: { path?: string; status?: number; error?: string }) =>
-            `${a.path || 'unknown'}:${a.status || a.error || 'failed'}`).join(' | ')
+        ? data.attempts.map((a: { path?: string; authMode?: string; status?: number; error?: string }) =>
+            `${a.path || 'unknown'}[${a.authMode || 'n/a'}]:${a.status || a.error || 'failed'}`).join(' | ')
         : '';
       const baseMessage = data?.message || (data?.ok ? '✅ تم الاتصال بنجاح — مزود الخدمة متصل ويعمل' : '❌ فشل الاتصال — تحقق من بيانات الربط');
       const details = attemptsSummary ? ` — ${attemptsSummary}` : '';
