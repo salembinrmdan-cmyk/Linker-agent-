@@ -12,6 +12,22 @@ function stringField(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function normalizeBaseUrl(url: string): string {
+  return url.endsWith('/') ? url.slice(0, -1) : url;
+}
+
+function resolveWhatsAppProviderConfig(payload: Record<string, unknown>) {
+  const apiUrlFromBody = stringField(payload.apiUrl);
+  const apiKeyFromBody = stringField(payload.apiKey);
+  const envUrl = stringField(process.env.WHATSAPP_API_URL);
+  const envToken = stringField(process.env.WHATSAPP_API_TOKEN);
+
+  return {
+    apiUrl: normalizeBaseUrl(apiUrlFromBody || envUrl || 'https://gate.whapi.cloud/'),
+    apiKey: apiKeyFromBody || envToken,
+  };
+}
+
 function createCorsOptions() {
   return { credentials: true, origin(_origin: string | undefined, callback: (err: Error | null, ok?: boolean) => void) { callback(null, true); } };
 }
