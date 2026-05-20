@@ -157,8 +157,6 @@ export function createServerApp() {
     res.json({ ok: true, service: 'Linker Agent API', timestamp: new Date().toISOString() });
   });
 
-  });
-
   app.post('/api/integrations/survey-agent/webhook', async (request, response) => {
     try {
       const body = request.body as Record<string, unknown>;
