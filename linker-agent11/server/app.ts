@@ -152,8 +152,11 @@ export function createServerApp() {
   app.use(express.json({ limit: '1mb' }));
   app.use(cors(createCorsOptions()));
 
-  app.get('/api/health', (_request, response) => {
-    response.json({ ok: true, service: 'Market Intelligence Agent' });
+  // Health check — no DB, no auth, always first
+  app.get('/api/health', (_req, res) => {
+    res.json({ ok: true, service: 'Linker Agent API', timestamp: new Date().toISOString() });
+  });
+
   });
 
   app.post('/api/integrations/survey-agent/webhook', async (request, response) => {
@@ -338,6 +341,18 @@ export function createServerApp() {
       status: result.status,
       attempts: result.attempts,
     });
+  });
+
+  // ─── Global 4-arg Error Handler (must be LAST) ───────────────────────────
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  app.use((err: any, _req: any, res: any, _next: any) => {
+    console.error('[Express Error]', err?.stack || err?.message || err);
+    if (!res.headersSent) {
+      res.status(err?.status || 500).json({
+        ok: false,
+        message: err?.message || 'Internal server error',
+      });
+    }
   });
 
   return app;
