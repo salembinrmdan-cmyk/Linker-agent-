@@ -1,0 +1,121 @@
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+model SurveyCampaign {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  status      String   @default("draft")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  responses   SurveyResponse[]
+}
+
+model SurveyCustomer {
+  id               String   @id @default(cuid())
+  phone            String   @unique
+  name             String?
+  city             String?
+  segment          String?
+  optOut           Boolean  @default(false)
+  lastContactedAt  DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  responses        SurveyResponse[]
+  sessions         SurveySession[]
+}
+
+model SurveyResponse {
+  id              String   @id @default(cuid())
+  campaignId      String
+  customerId      String
+  campaign        SurveyCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  customer        SurveyCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  platforms         String?
+  preferredPlatform String?
+  purchaseMethod    String?
+  purchaseMethodRaw String?
+  brokerType        String?
+  brokerSource      String?
+  brokerName        String?
+  brokerPlatform    String?
+  brokerReason      String?
+  deliveryTime      String?
+  cashOnDelivery    String?
+  hasProblems       Boolean?
+  mainProblem       String?
+  orderValue        String?
+  purchaseFrequency String?
+  ageGroup          String?
+  gender            String?
+  paymentPreference String?
+  canceledBefore    Boolean?
+  cancelReason      String?
+  biggestAnnoyance  String?
+  directPurchaseProb String?
+  directEncouragement String?
+  directHesitation  String?
+  refusalReason     String?
+
+  rawChatLog        String?
+  status            String  @default("in_progress")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([campaignId])
+  @@index([customerId])
+  @@unique([campaignId, customerId])
+}
+
+model MarketBroker {
+  id              String   @id @default(cuid())
+  name            String
+  normalizedName  String   @unique
+  type            String?
+  gender          String?
+  channel         String?
+  associatedCity  String?
+  coverageCities  String?
+  platforms       String?
+  problemScore    Int      @default(0)
+  trustScore      Int      @default(0)
+  marketInfluence Int      @default(0)
+  mentionCount    Int      @default(1)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model MarketPlatform {
+  id              String   @id @default(cuid())
+  name            String
+  normalizedName  String   @unique
+  usageCount      Int      @default(0)
+  brokerDepRatio  Float    @default(0.0)
+  problemScore    Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model SurveySession {
+  id             String   @id @default(cuid())
+  phone          String
+  campaignId     String
+  customerId     String
+  customer       SurveyCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  currentState   String   @default("GREETING")
+  extractedData  Json     @default("{}")
+  rawLogs        Json     @default("[]")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([phone])
+}

@@ -1,0 +1,12 @@
+*
+!api
+!api/**
+!linker-agent11
+!linker-agent11/**
+linker-agent11/node_modules
+linker-agent11/node_modules/**
+linker-agent11/dist
+linker-agent11/dist/**
+!package.json
+!tsconfig.json
+!vercel.json
