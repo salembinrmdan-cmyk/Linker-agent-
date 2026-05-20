@@ -1,9 +1,17 @@
 import { createServerApp } from '../linker-agent11/server/app';
-import type { IncomingMessage, ServerResponse } from 'node:http';
 
 let app: ReturnType<typeof createServerApp> | null = null;
 
-export default function handler(req: IncomingMessage, res: ServerResponse) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export default function handler(req: any, res: any) {
   if (!app) app = createServerApp();
-  return app(req, res);
+  app(req, res, (err: unknown) => {
+    if (err) {
+      res.statusCode = 500;
+      res.end(JSON.stringify({ ok: false, message: String(err) }));
+    } else {
+      res.statusCode = 404;
+      res.end(JSON.stringify({ ok: false, message: 'Not found' }));
+    }
+  });
 }
