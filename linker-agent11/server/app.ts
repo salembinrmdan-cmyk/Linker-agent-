@@ -40,15 +40,6 @@ async function testCustomProviderConnection(apiUrl: string, apiKey: string) {
   return {
     ok: false as const,
     message: lastStatus ? `Provider responded with status ${lastStatus}` : 'Unable to reach provider',
-function resolveWhatsAppProviderConfig(payload: Record<string, unknown>) {
-  const apiUrlFromBody = stringField(payload.apiUrl);
-  const apiKeyFromBody = stringField(payload.apiKey);
-  const envUrl = stringField(process.env.WHATSAPP_API_URL);
-  const envToken = stringField(process.env.WHATSAPP_API_TOKEN);
-
-  return {
-    apiUrl: normalizeBaseUrl(apiUrlFromBody || envUrl || 'https://gate.whapi.cloud/'),
-    apiKey: apiKeyFromBody || envToken,
   };
 }
 
@@ -224,42 +215,6 @@ export function createServerApp() {
       apiUrl: normalizedUrl,
       message: `Connection successful via ${result.path}`,
     });
-    const body = (request.body || {}) as Record<string, unknown>;
-    const provider = stringField(body.provider) || 'custom';
-    const { apiUrl, apiKey } = resolveWhatsAppProviderConfig(body);
-
-    if (!apiKey) { response.status(400).json({ ok: false, message: 'Missing API Key / Token' }); return; }
-
-    try {
-      const result = await fetch(`${apiUrl}/settings`, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!result.ok) {
-        response.status(502).json({
-          ok: false,
-          connected: false,
-          provider,
-          apiUrl,
-          message: `Provider responded with status ${result.status}`,
-        });
-        return;
-      }
-
-      response.json({ ok: true, connected: true, provider, apiUrl });
-    } catch (error) {
-      response.status(502).json({
-        ok: false,
-        connected: false,
-        provider,
-        apiUrl,
-        message: error instanceof Error ? error.message : 'Connection failed',
-      });
-    }
   });
 
   return app;
