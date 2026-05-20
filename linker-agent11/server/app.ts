@@ -17,6 +17,7 @@ function normalizeBaseUrl(url: string): string {
 
 async function testCustomProviderConnection(apiUrl: string, apiKey: string) {
   const candidatePaths = ['/health', '/settings'];
+  const attempts: Array<{ path: string; ok: boolean; status?: number; error?: string }> = [];
   let lastStatus: number | null = null;
 
   for (const path of candidatePaths) {
@@ -30,9 +31,14 @@ async function testCustomProviderConnection(apiUrl: string, apiKey: string) {
         },
       });
 
-      if (result.ok) return { ok: true as const, path };
+      if (result.ok) {
+        attempts.push({ path, ok: true, status: result.status });
+        return { ok: true as const, path, status: result.status, attempts };
+      }
+      attempts.push({ path, ok: false, status: result.status });
       lastStatus = result.status;
     } catch {
+      attempts.push({ path, ok: false, error: 'Network error or timeout' });
       // try next candidate
     }
   }
@@ -40,6 +46,7 @@ async function testCustomProviderConnection(apiUrl: string, apiKey: string) {
   return {
     ok: false as const,
     message: lastStatus ? `Provider responded with status ${lastStatus}` : 'Unable to reach provider',
+    attempts,
   };
 }
 
@@ -204,6 +211,7 @@ export function createServerApp() {
         provider: currentProvider,
         apiUrl: normalizedUrl,
         message: result.message,
+        attempts: result.attempts,
       });
       return;
     }
@@ -214,6 +222,8 @@ export function createServerApp() {
       provider: currentProvider,
       apiUrl: normalizedUrl,
       message: `Connection successful via ${result.path}`,
+      status: result.status,
+      attempts: result.attempts,
     });
   });
 

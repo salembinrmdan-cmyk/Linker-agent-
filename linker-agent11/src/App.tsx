@@ -1389,7 +1389,6 @@ function CampaignsPage() {
 
 function SettingsPage() {
   const [profile, setProfile] = useState({ name: 'أحمد محمد سالم', email: 'ahmed@linker-intelligence.com', org: 'لينكر ماركت للأبحاث', lang: 'العربية (Yemen)' });
-
   const [waba, setWaba] = useState({ provider: 'custom', apiUrl: 'https://gate.whapi.cloud/', apiKey: 'iQpbDrEIyNctlBtajcEP3NjFNTN9NfT4', phoneId: '', businessId: '', webhookToken: 'linker-webhook-secret' });
   const [webhookUrl, setWebhookUrl] = useState('https://linker-agent.com/api/integrations/survey-agent/webhook');
   const [saving, setSaving] = useState(false);
@@ -1417,8 +1416,13 @@ function SettingsPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider: waba.provider, apiUrl: waba.apiUrl, apiKey: waba.apiKey }),
     }).then(async r => ({ status: r.status, data: await r.json() })).then(({ status, data }) => {
-      const message = data?.message || (data?.ok ? '✅ تم الاتصال بنجاح — مزود الخدمة متصل ويعمل' : '❌ فشل الاتصال — تحقق من بيانات الربط');
-      setToast({ message: status < 400 ? message : `❌ ${message}`, type: data?.ok ? 'success' : 'error' });
+      const attemptsSummary = Array.isArray(data?.attempts)
+        ? data.attempts.map((a: { path?: string; status?: number; error?: string }) =>
+            `${a.path || 'unknown'}:${a.status || a.error || 'failed'}`).join(' | ')
+        : '';
+      const baseMessage = data?.message || (data?.ok ? '✅ تم الاتصال بنجاح — مزود الخدمة متصل ويعمل' : '❌ فشل الاتصال — تحقق من بيانات الربط');
+      const details = attemptsSummary ? ` — ${attemptsSummary}` : '';
+      setToast({ message: status < 400 ? `${baseMessage}${details}` : `❌ ${baseMessage}${details}`, type: data?.ok ? 'success' : 'error' });
     }).catch(() => setToast({ message: '❌ فشل الاتصال بالخادم', type: 'error' }));
   };
 
