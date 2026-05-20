@@ -15,30 +15,15 @@ function normalizeBaseUrl(url: string): string {
   return url.endsWith('/') ? url.slice(0, -1) : url;
 }
 
-async function testCustomProviderConnection(apiUrl: string, apiKey: string) {
-  const candidatePaths = ['/health', '/settings'];
-  let lastStatus: number | null = null;
-
-  for (const path of candidatePaths) {
-    try {
-      const result = await fetch(`${apiUrl}${path}`, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          Accept: 'application/json',
-        },
-      });
-
-      if (result.ok) return { ok: true as const, path };
-      lastStatus = result.status;
-    } catch {
-      // try next candidate
-    }
-  }
+function resolveWhatsAppProviderConfig(payload: Record<string, unknown>) {
+  const apiUrlFromBody = stringField(payload.apiUrl);
+  const apiKeyFromBody = stringField(payload.apiKey);
+  const envUrl = stringField(process.env.WHATSAPP_API_URL);
+  const envToken = stringField(process.env.WHATSAPP_API_TOKEN);
 
   return {
-    ok: false as const,
-    message: lastStatus ? `Provider responded with status ${lastStatus}` : 'Unable to reach provider',
+    apiUrl: normalizeBaseUrl(apiUrlFromBody || envUrl || 'https://gate.whapi.cloud/'),
+    apiKey: apiKeyFromBody || envToken,
   };
 }
 
