@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import { ConversationEngine, getSurveyConfig, updateSurveyConfig, resetSurveyConfig } from './conversationEngine';
 import { MarketIntelligenceStore } from './marketIntelligenceStore';
-import type { CustomerProfile } from './marketIntelligenceStore';
+
 import { qualityMonitor, campaignScheduler, canSendNow, getMessageForPhase, warmUpSchedule, humanizationEngine, hasSpamKeywords } from './messagingEngine';
 import { whatsappTemplates } from './whatsappTemplates';
 
