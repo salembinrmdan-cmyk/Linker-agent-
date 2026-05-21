@@ -176,13 +176,6 @@ export function createServerApp() {
     }
   }
 
-      return true;
-    } catch (err) {
-      console.error('[whapi] buttons error:', err);
-      return sendWhapiMessage(to, text);
-    }
-  }
-
   // Parse whapi reply message text & extract button reply if any
   function extractWhapiMessage(body: Record<string, unknown>): { phone: string; text: string } | null {
     // whapi sends messages array
