@@ -75,6 +75,27 @@ type MetricCardProps = {
 
 const chartColors = ['#0d9488', '#3b82f6', '#f59e0b', '#64748b', '#ec4899', '#8b5cf6'];
 
+const defaultWabaSettings = {
+  provider: 'custom',
+  apiUrl: 'https://gate.whapi.cloud/',
+  apiKey: 'iQpbDrEIyNctlBtajcEP3NjFNTN9NfT4',
+  phoneId: '',
+  businessId: '',
+  webhookToken: 'linker-webhook-secret',
+};
+
+type WabaSettings = typeof defaultWabaSettings;
+
+function readStoredWabaSettings(): Partial<WabaSettings> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const saved = window.localStorage.getItem('linker_waba_settings');
+    return saved ? JSON.parse(saved) as Partial<WabaSettings> : {};
+  } catch {
+    return {};
+  }
+}
+
 type FilterState = { period: string; city: string; platform: string };
 const FilterContext = createContext<{ filters: FilterState; setFilters: (f: Partial<FilterState>) => void }>({ filters: { period: 'آخر 30 يوم', city: 'كل المدن', platform: 'كل المنصات' }, setFilters: () => {} });
 function useFilters() { return useContext(FilterContext); }
@@ -1379,10 +1400,11 @@ function CampaignsPage() {
 
     try {
       // Send via server — server handles whapi + conversation engine
+      const waba = { ...defaultWabaSettings, ...readStoredWabaSettings() };
       const resp = await fetch('/api/campaigns/launch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customers, campaignId: `campaign_${Date.now()}` }),
+        body: JSON.stringify({ customers, campaignId: `campaign_${Date.now()}`, waba: { apiUrl: waba.apiUrl, apiKey: waba.apiKey } }),
       });
       const data = await resp.json() as { ok: boolean; queued?: number; message?: string };
 
@@ -1392,7 +1414,7 @@ function CampaignsPage() {
       } else {
         setToast({ message: `❌ ${data.message || 'فشل إطلاق الحملة'}`, type: 'error' });
       }
-    } catch (err) {
+    } catch {
       setToast({ message: `❌ خطأ في الاتصال بالخادم`, type: 'error' });
     }
 
@@ -1487,7 +1509,7 @@ function CampaignsPage() {
 
 function SettingsPage() {
   const [profile, setProfile] = useState({ name: 'أحمد محمد سالم', email: 'ahmed@linker-intelligence.com', org: 'لينكر ماركت للأبحاث', lang: 'العربية (Yemen)' });
-  const [waba, setWaba] = useState({ provider: 'custom', apiUrl: 'https://gate.whapi.cloud/', apiKey: 'iQpbDrEIyNctlBtajcEP3NjFNTN9NfT4', phoneId: '', businessId: '', webhookToken: 'linker-webhook-secret' });
+  const [waba, setWaba] = useState<WabaSettings>(() => ({ ...defaultWabaSettings, ...readStoredWabaSettings() }));
   const [webhookUrl, setWebhookUrl] = useState('https://linker-agent.com/api/integrations/survey-agent/webhook');
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{message:string;type:'success'|'error'}|null>(null);

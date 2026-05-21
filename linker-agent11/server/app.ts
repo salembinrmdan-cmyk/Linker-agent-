@@ -167,7 +167,7 @@ export function createServerApp() {
     const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
     const options = lines
       .map(line => {
-        const match = line.match(/^(?:\d+|[0-9]+️⃣)\s*[\)\.\-:]?\s*(.+)$/u);
+        const match = line.match(/^(?:\d+|[0-9]+️⃣)\s*[).:-]?\s*(.+)$/u);
         return match ? match[1].trim() : '';
       })
       .filter(Boolean);
