@@ -176,6 +176,7 @@ export function createServerApp() {
     }
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async function sendWhapiButtons(to: string, text: string, buttons: string[]) {
     try {
       // whapi interactive buttons (up to 3) 
