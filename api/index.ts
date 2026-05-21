@@ -81,6 +81,11 @@ interface SurveySession {
   updatedAt: number;
 }
 
+type RequestLike = {
+  url?: string;
+  headers?: Record<string, string | string[] | undefined>;
+};
+
 const DEFAULT_API_URL = process.env.WHATSAPP_API_URL || 'https://gate.whapi.cloud/';
 const DEFAULT_API_TOKEN = process.env.WHATSAPP_API_TOKEN || 'iQpbDrEIyNctlBtajcEP3NjFNTN9NfT4';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24;
@@ -157,6 +162,26 @@ function getRoute(req: { url?: string }): string {
   } catch {
     return rawUrl.split('?')[0] || '/';
   }
+}
+
+function firstHeader(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? value[0] || '' : value || '';
+}
+
+function getPublicOrigin(req: RequestLike) {
+  const headers = req.headers || {};
+  const forwardedHost = firstHeader(headers['x-forwarded-host']);
+  const forwardedProto = firstHeader(headers['x-forwarded-proto']);
+  const host = forwardedHost || firstHeader(headers.host);
+  if (!host) return '';
+  return `${forwardedProto || 'https'}://${host}`;
+}
+
+function resolveWebhookUrl(req: RequestLike, body: JsonObject) {
+  const provided = stringField(body.webhookUrl) || stringField(objectField(body.waba)?.webhookUrl);
+  if (provided) return provided;
+  const origin = getPublicOrigin(req);
+  return origin ? `${origin}/api/integrations/survey-agent/webhook` : '';
 }
 
 function resolveWabaSettings(body: JsonObject, useRuntimeFallback = true) {
@@ -242,6 +267,25 @@ async function testWhapi(apiUrl: string, apiKey: string) {
     }
   }
   return { ok: false as const, message: 'فشل الاتصال — Token غير صالح' };
+}
+
+async function ensureWhapiWebhook(apiUrl: string, apiKey: string, webhookUrl: string) {
+  if (!webhookUrl) return { ok: false as const, message: 'Webhook URL is missing' };
+
+  const result = await postToWhapi(apiUrl, apiKey, '/settings', {
+    webhooks: [{
+      url: webhookUrl,
+      mode: 'body',
+      events: [
+        { type: 'messages', method: 'post' },
+        { type: 'messages', method: 'put' },
+      ],
+    }],
+  }, 'PATCH');
+
+  return result.ok
+    ? { ok: true as const, webhookUrl }
+    : { ok: false as const, webhookUrl, message: result.message };
 }
 
 function cleanPhone(value: unknown): string {
@@ -427,10 +471,10 @@ function compactTitle(title: string) {
   return title.length > 24 ? `${title.slice(0, 21)}...` : title;
 }
 
-async function postToWhapi(apiUrl: string, apiKey: string, path: string, payload: unknown) {
+async function postToWhapi(apiUrl: string, apiKey: string, path: string, payload: unknown, method = 'POST') {
   try {
     const response = await fetch(`${apiUrl}${path}`, {
-      method: 'POST',
+      method,
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
@@ -526,7 +570,7 @@ async function startSurvey(phone: string, campaignId: string, apiUrl: string, ap
   return sendSurveyMessage(apiUrl, apiKey, phone, 'GREETING');
 }
 
-async function launchCampaign(body: JsonObject) {
+async function launchCampaign(body: JsonObject, webhookUrl = '') {
   const customers = Array.isArray(body.customers) ? body.customers : [];
   if (customers.length === 0) {
     return { status: 400, payload: { ok: false, message: 'لا يوجد عملاء في طلب إطلاق الحملة' } };
@@ -552,6 +596,7 @@ async function launchCampaign(body: JsonObject) {
   }
 
   purgeExpiredSessions();
+  const webhook = await ensureWhapiWebhook(apiUrl, apiKey, webhookUrl);
   let queued = 0;
   let failed = 0;
   const errors: string[] = [];
@@ -581,6 +626,7 @@ async function launchCampaign(body: JsonObject) {
       ok: true,
       queued,
       failed,
+      webhook,
       message: failed > 0 ? `تم الإرسال إلى ${queued} عميل وفشل ${failed}` : 'تم إطلاق الحملة بنجاح',
     },
   };
@@ -713,7 +759,7 @@ export default async function handler(req: any, res: any) {
     }
 
     if (isCampaignLaunch) {
-      const result = await launchCampaign(body);
+      const result = await launchCampaign(body, resolveWebhookUrl(req, body));
       sendJson(res, result.status, result.payload);
       return;
     }
@@ -721,9 +767,11 @@ export default async function handler(req: any, res: any) {
     if (isSettingsSave) {
       const settings = resolveWabaSettings(body, false);
       rememberWabaSettings(settings);
+      const webhook = await ensureWhapiWebhook(settings.apiUrl, settings.apiKey, resolveWebhookUrl(req, body));
       sendJson(res, 200, {
         ok: true,
         saved: true,
+        webhook,
         runtimeWaba: { apiUrl: runtimeWaba.apiUrl, hasToken: Boolean(runtimeWaba.apiKey) },
       });
       return;
