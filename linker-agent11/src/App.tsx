@@ -1,4 +1,5 @@
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import * as XLSX from 'xlsx';
 import { useState, createContext, useContext, type ReactNode } from 'react';
 import {
   Activity,
@@ -227,12 +228,7 @@ const opportunities = [
   { name: 'تجميع الشحنات', demand: 72, pain: 55, size: 520 },
 ];
 
-const responses = [
-  { name: 'أحمد علي', phone: '967771234567', city: 'صنعاء', platform: 'Shein', issue: 'تأخير في تسليم الشحنة', rating: 4, date: '2026/05/18 14:20', status: 'مكتمل' },
-  { name: 'سارة محمد', phone: '967739876543', city: 'عدن', platform: 'Amazon', issue: 'خطأ في المقاسات المستلمة', rating: 3, date: '2026/05/18 13:45', status: 'معلق' },
-  { name: 'خالد جمال', phone: '967710987654', city: 'تعز', platform: 'AliExpress', issue: 'رسوم جمركية غير متوقعة', rating: 2, date: '2026/05/18 11:10', status: 'مكتمل' },
-  { name: 'نورة صالح', phone: '967731231231', city: 'صنعاء', platform: 'Noon', issue: 'تجربة ممتازة', rating: 5, date: '2026/05/18 10:05', status: 'مكتمل' },
-];
+const responses: {name:string;phone:string;city:string;platform:string;issue:string;rating:number;date:string;status:string}[] = [];
 
 const campaigns = [
   { name: 'مسح القوة الشرائية - إب', sent: '5,000', responses: '3,640', rate: '72.8%', status: 'نشط', spend: '$420' },
@@ -298,8 +294,7 @@ function downloadCampaignTemplate() {
     'linker_campaign_template.csv',
     ['رقم الهاتف', 'الاسم', 'المدينة'],
     [
-      ['967771234567', 'أحمد علي', 'صنعاء'],
-      ['967739876543', 'سارة محمد', 'عدن'],
+
       ['967710987654', 'خالد جمال', 'تعز'],
       ['', '', ''],
       ['', '', ''],
@@ -1327,24 +1322,49 @@ function CampaignsPage() {
   const [customers, setCustomers] = useState<{phone:string;name:string;city:string}[]>([]);
   const [progress, setProgress] = useState<{sent:number;failed:number;total:number}|null>(null);
 
-  // Parse CSV/Excel file
+  // Parse CSV or Excel file using SheetJS
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploadedFile(file);
-    const text = await file.text();
-    const lines = text.trim().split('\n').filter(l => l.trim());
-    // Skip header row
-    const parsed = lines.slice(1).map(line => {
-      const cols = line.split(',').map(c => c.trim().replace(/"/g, ''));
-      // Support both orders: phone,name,city OR city,name,phone (based on template)
-      // Template header: رقم الهاتف, الاسم, المدينة
-      const phone = cols[0]?.replace(/\s+/g, '') || '';
-      const name  = cols[1] || '';
-      const city  = cols[2] || '';
-      return { phone, name, city };
-    }).filter(r => r.phone.length >= 9);
-    setCustomers(parsed);
+    setCustomers([]); // reset first
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      // Convert to array of arrays
+      const rows = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1, defval: '' }) as string[][];
+
+      if (rows.length < 2) {
+        alert('الملف فارغ أو لا يحتوي على بيانات');
+        return;
+      }
+
+      // Detect column indices from header row
+      const header = rows[0].map(h => String(h).trim());
+      const phoneIdx = header.findIndex(h => h.includes('هاتف') || h.includes('phone') || h.toLowerCase().includes('phone'));
+      const nameIdx  = header.findIndex(h => h.includes('اسم') || h.toLowerCase().includes('name'));
+      const cityIdx  = header.findIndex(h => h.includes('مدين') || h.toLowerCase().includes('city'));
+
+      // Fallback: assume columns A=phone, B=name, C=city if headers not found
+      const pIdx = phoneIdx >= 0 ? phoneIdx : 0;
+      const nIdx = nameIdx  >= 0 ? nameIdx  : 1;
+      const cIdx = cityIdx  >= 0 ? cityIdx  : 2;
+
+      const parsed = rows.slice(1)
+        .map(row => ({
+          phone: String(row[pIdx] || '').replace(/\s+/g, '').replace(/[^\d+]/g, ''),
+          name:  String(row[nIdx] || '').trim(),
+          city:  String(row[cIdx] || '').trim(),
+        }))
+        .filter(r => r.phone.length >= 9);
+
+      setCustomers(parsed);
+    } catch (err) {
+      alert('تعذّر قراءة الملف — تأكد أنه CSV أو Excel صالح');
+      console.error(err);
+    }
   };
 
   // Get saved whapi settings from localStorage (saved by SettingsPage)
