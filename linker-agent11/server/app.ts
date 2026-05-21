@@ -176,30 +176,6 @@ export function createServerApp() {
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async function sendWhapiButtons(to: string, text: string, buttons: string[]) {
-    try {
-      // whapi interactive buttons (up to 3) 
-      const res = await fetch(`${WHAPI_URL}/messages/interactive`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to,
-          type: 'button',
-          body: { text },
-          action: {
-            buttons: buttons.slice(0, 3).map((b, i) => ({
-              type: 'reply',
-              reply: { id: `btn_${i}`, title: b.slice(0, 20) },
-            })),
-          },
-        }),
-      });
-      if (!res.ok) {
-        // fallback to plain text if buttons not supported
-        console.warn('[whapi] buttons failed, fallback to text');
-        return sendWhapiMessage(to, text);
-      }
       return true;
     } catch (err) {
       console.error('[whapi] buttons error:', err);
