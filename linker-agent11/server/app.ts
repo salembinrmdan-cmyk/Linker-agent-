@@ -167,16 +167,48 @@ export function createServerApp() {
     const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
     const options = lines
       .map(line => {
-        const match = line.match(/^(?:\d+|[0-9]+️⃣)\s*[).:-]?\s*(.+)$/u);
+        const match = line.match(/^(?:[0-9]+️⃣|🔟|\d+)\s*[).:-]?\s*(.+)$/u);
         return match ? match[1].trim() : '';
       })
       .filter(Boolean);
     return options.length >= 2 ? options : [];
   }
 
+  function stripNumberedOptions(text: string) {
+    return text
+      .split('\n')
+      .filter(line => !line.trim().match(/^(?:[0-9]+️⃣|🔟|\d+)\s*[).:-]?\s*(.+)$/u))
+      .join('\n')
+      .trim();
+  }
+
+  function compactInteractiveTitle(title: string) {
+    return title.length > 24 ? `${title.slice(0, 21)}...` : title;
+  }
+
   async function sendWhapiMessage(to: string, text: string) {
     try {
       const options = parseNumberedOptions(text);
+      if (options.length === 0 && text.includes('هل ممكن نبدأ')) {
+        const approvalRes = await fetch(`${runtimeWaba.apiUrl}/messages/interactive`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${runtimeWaba.apiToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to,
+            type: 'button',
+            body: { text },
+            action: {
+              buttons: [
+                { type: 'quick_reply', id: 'survey_start_yes', title: 'نعم، أبدأ' },
+                { type: 'quick_reply', id: 'survey_start_later', title: 'لاحقاً' },
+              ],
+            },
+          }),
+        });
+        if (approvalRes.ok) return true;
+        console.error('[whapi] approval buttons failed:', approvalRes.status, await approvalRes.text());
+      }
+
       if (options.length > 0) {
         const interactiveRes = await fetch(`${runtimeWaba.apiUrl}/messages/interactive`, {
           method: 'POST',
@@ -184,11 +216,15 @@ export function createServerApp() {
           body: JSON.stringify({
             to,
             type: 'list',
-            header: { type: 'text', text: 'اختر إجابتك' },
-            body: { text },
+            body: { text: stripNumberedOptions(text) || text },
             action: {
-              button: 'عرض الخيارات',
-              sections: [{ title: 'خيارات الاستبيان', rows: options.map((title, i) => ({ id: `opt_${i+1}`, title })) }],
+              list: {
+                label: 'اختر الإجابة',
+                sections: [{
+                  title: 'خيارات الاستبيان',
+                  rows: options.map((title, i) => ({ id: `opt_${i+1}`, title: compactInteractiveTitle(title), description: title })),
+                }],
+              },
             },
           }),
         });
@@ -218,6 +254,16 @@ export function createServerApp() {
 
     const from = stringField(msg.from || msg.chat_id);
     if (!from) return null;
+
+    const reply = msg.reply as Record<string, unknown> | undefined;
+    const buttonReply = reply?.buttons_reply as Record<string, unknown> | undefined;
+    if (buttonReply) {
+      return { phone: from, text: stringField(buttonReply?.title || buttonReply?.id) || '' };
+    }
+    const listReply = reply?.list_reply as Record<string, unknown> | undefined;
+    if (listReply) {
+      return { phone: from, text: stringField(listReply?.title || listReply?.id || listReply?.description) || '' };
+    }
 
     // Button reply
     const interactive = msg.interactive as Record<string, unknown> | undefined;
