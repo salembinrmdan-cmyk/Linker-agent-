@@ -1385,77 +1385,31 @@ function CampaignsPage() {
       setToast({ message: 'لا يوجد عملاء في الملف المرفوع', type: 'error' });
       return;
     }
-    const { apiUrl, apiKey } = getWabaSettings();
-    if (!apiKey) {
-      setToast({ message: '⚠️ الرجاء إدخال API Key في صفحة الإعدادات أولاً', type: 'error' });
-      return;
-    }
 
     setLaunching(true);
     setShowLaunchModal(false);
     setProgress({ sent: 0, failed: 0, total: customers.length });
 
-    let sent = 0;
-    let failed = 0;
-    const baseUrl = apiUrl.endsWith('/') ? apiUrl.slice(0, -1) : apiUrl;
+    try {
+      // Send via server — server handles whapi + conversation engine
+      const resp = await fetch('/api/campaigns/launch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customers, campaignId: `campaign_${Date.now()}` }),
+      });
+      const data = await resp.json() as { ok: boolean; queued?: number; message?: string };
 
-    for (const customer of customers) {
-      try {
-        // Format phone: ensure it starts with country code
-        const phone = customer.phone.replace(/\D/g, '');
-        const formattedPhone = phone.startsWith('00') ? phone.slice(2) : phone;
-
-        // Survey message
-        const message = `مرحباً ${customer.name} 👋
-
-نحن فريق *لينكر لوجستيكس* ونسعد بخدمتك.
-
-نودّ معرفة رأيك في تجربة الشحن والتسوق الخاصة بك عبر رسالة قصيرة لا تستغرق أكثر من دقيقتين.
-
-مشاركتك تساعدنا في تحسين خدماتك 🙏
-
-للبدء، أجب على هذا السؤال:
-*كيف تُقيّم تجربة الشحن الأخيرة من ${customer.city || 'مدينتك'}؟*
-
-1️⃣ ممتازة
-2️⃣ جيدة
-3️⃣ متوسطة
-4️⃣ سيئة`;
-
-        const resp = await fetch(`${baseUrl}/messages/text`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-          },
-          body: JSON.stringify({
-            to: formattedPhone,
-            body: message,
-          }),
-        });
-
-        if (resp.ok) {
-          sent++;
-        } else {
-          failed++;
-          console.error(`Failed ${customer.phone}:`, resp.status);
-        }
-      } catch (err) {
-        failed++;
-        console.error(`Error sending to ${customer.phone}:`, err);
+      if (data.ok) {
+        setProgress({ sent: data.queued || customers.length, failed: 0, total: customers.length });
+        setToast({ message: `✅ تم إطلاق الحملة — ${data.queued || customers.length} عميل في قائمة الإرسال`, type: 'success' });
+      } else {
+        setToast({ message: `❌ ${data.message || 'فشل إطلاق الحملة'}`, type: 'error' });
       }
-
-      setProgress({ sent, failed, total: customers.length });
-      // Delay between messages to avoid spam detection (2-4 seconds)
-      await new Promise(r => setTimeout(r, 2000 + Math.random() * 2000));
+    } catch (err) {
+      setToast({ message: `❌ خطأ في الاتصال بالخادم`, type: 'error' });
     }
 
     setLaunching(false);
-    setToast({
-      message: `✅ اكتمل الإرسال: ${sent} رسالة أُرسلت${failed > 0 ? `، ${failed} فشلت` : ''}`,
-      type: sent > 0 ? 'success' : 'error'
-    });
     setProgress(null);
   };
 

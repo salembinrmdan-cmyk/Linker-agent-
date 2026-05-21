@@ -157,9 +157,98 @@ export function createServerApp() {
     res.json({ ok: true, service: 'Linker Agent API', timestamp: new Date().toISOString() });
   });
 
+  // ─── whapi config (read from env or defaults) ────────────────────────────
+  const WHAPI_URL = (process.env.WHATSAPP_API_URL || 'https://gate.whapi.cloud').replace(/\/$/, '');
+  const WHAPI_TOKEN = process.env.WHATSAPP_API_TOKEN || 'iQpbDrEIyNctlBtajcEP3NjFNTN9NfT4';
+
+  async function sendWhapiMessage(to: string, text: string) {
+    try {
+      const res = await fetch(`${WHAPI_URL}/messages/text`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to, body: text }),
+      });
+      if (!res.ok) console.error('[whapi] send failed:', res.status, await res.text());
+      return res.ok;
+    } catch (err) {
+      console.error('[whapi] send error:', err);
+      return false;
+    }
+  }
+
+  async function sendWhapiButtons(to: string, text: string, buttons: string[]) {
+    try {
+      // whapi interactive buttons (up to 3) 
+      const res = await fetch(`${WHAPI_URL}/messages/interactive`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to,
+          type: 'button',
+          body: { text },
+          action: {
+            buttons: buttons.slice(0, 3).map((b, i) => ({
+              type: 'reply',
+              reply: { id: `btn_${i}`, title: b.slice(0, 20) },
+            })),
+          },
+        }),
+      });
+      if (!res.ok) {
+        // fallback to plain text if buttons not supported
+        console.warn('[whapi] buttons failed, fallback to text');
+        return sendWhapiMessage(to, text);
+      }
+      return true;
+    } catch (err) {
+      console.error('[whapi] buttons error:', err);
+      return sendWhapiMessage(to, text);
+    }
+  }
+
+  // Parse whapi reply message text & extract button reply if any
+  function extractWhapiMessage(body: Record<string, unknown>): { phone: string; text: string } | null {
+    // whapi sends messages array
+    const messages = body.messages as Array<Record<string, unknown>> | undefined;
+    const msg = messages?.[0];
+    if (!msg) return null;
+
+    const from = stringField(msg.from || msg.chat_id);
+    if (!from) return null;
+
+    // Button reply
+    const interactive = msg.interactive as Record<string, unknown> | undefined;
+    if (interactive?.type === 'button_reply') {
+      const reply = interactive.button_reply as Record<string, unknown>;
+      return { phone: from, text: stringField(reply?.title) || '' };
+    }
+
+    // Plain text
+    const textObj = msg.text as Record<string, unknown> | undefined;
+    const text = stringField(textObj?.body || msg.body || msg.text);
+    if (!text) return null;
+
+    return { phone: from, text };
+  }
+
+  // ─── whapi Webhook (receives customer replies) ───────────────────────────
   app.post('/api/integrations/survey-agent/webhook', async (request, response) => {
+    // Always respond 200 immediately so whapi doesn't retry
+    response.status(200).json({ ok: true });
+
     try {
       const body = request.body as Record<string, unknown>;
+
+      // Handle whapi format (messages array)
+      const parsed = extractWhapiMessage(body);
+      if (parsed) {
+        const { phone, text } = parsed;
+        const reply = await ConversationEngine.handleIncomingMessage(phone, text);
+        if (reply) await sendWhapiMessage(phone, reply);
+        return;
+      }
+
+      // Legacy format (direct phone+message from our own campaign launcher)
       const phone = stringField(body.phone);
       const message = stringField(body.message);
       const campaignId = stringField(body.campaignId);
@@ -168,26 +257,62 @@ export function createServerApp() {
         city: stringField(body.city) || undefined,
       };
 
-      if (!phone || !message) {
-        response.status(400).json({ ok: false, message: 'Missing phone or message' });
-        return;
-      }
+      if (!phone || !message) return;
 
       if (campaignId && message === 'START_CAMPAIGN') {
-        const reply = await ConversationEngine.startConversation(phone, campaignId, profile);
-        response.status(200).json({ ok: true, reply });
+        const greeting = await ConversationEngine.startConversation(phone, campaignId, profile);
+        await sendWhapiMessage(phone, greeting);
         return;
       }
 
       const reply = await ConversationEngine.handleIncomingMessage(phone, message);
-      if (reply) {
-        response.status(200).json({ ok: true, reply });
+      if (reply) await sendWhapiMessage(phone, reply);
+
+    } catch (error) {
+      console.error('[survey-webhook]', error);
+    }
+  });
+
+  // ─── Campaign launcher: sends first message + starts conversation ─────────
+  app.post('/api/campaigns/launch', async (request, response) => {
+    try {
+      const { customers, campaignId = 'default' } = request.body as {
+        customers: Array<{ phone: string; name: string; city: string }>;
+        campaignId?: string;
+      };
+
+      if (!customers?.length) {
+        response.status(400).json({ ok: false, message: 'No customers provided' });
         return;
       }
-      response.status(200).json({ ok: true, message: 'No active conversation for this user' });
-    } catch (error) {
-      console.error('[survey-agent-webhook]', error);
-      response.status(500).json({ ok: false, message: error instanceof Error ? error.message : 'Internal error' });
+
+      let queued = 0;
+      for (const customer of customers) {
+        const phone = customer.phone.replace(/\D/g, '');
+        if (phone.length < 9) continue;
+
+        // Start conversation session
+        await ConversationEngine.startConversation(phone, campaignId, {
+          name: customer.name,
+          city: customer.city,
+        });
+
+        // Send greeting via whapi
+        const greeting = await ConversationEngine.startConversation(phone, campaignId, {
+          name: customer.name,
+          city: customer.city,
+        });
+        await sendWhapiMessage(phone, greeting);
+        queued++;
+
+        // Delay between sends
+        await new Promise(r => setTimeout(r, 2500));
+      }
+
+      response.json({ ok: true, queued });
+    } catch (err) {
+      console.error('[campaign-launch]', err);
+      response.status(500).json({ ok: false, message: err instanceof Error ? err.message : 'Error' });
     }
   });
 
