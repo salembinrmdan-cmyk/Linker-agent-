@@ -87,7 +87,7 @@ type RequestLike = {
 };
 
 const DEFAULT_API_URL = process.env.WHATSAPP_API_URL || 'https://gate.whapi.cloud/';
-const DEFAULT_API_TOKEN = process.env.WHATSAPP_API_TOKEN || 'iQpbDrEIyNctlBtajcEP3NjFNTN9NfT4';
+const DEFAULT_API_TOKEN = process.env.WHATSAPP_API_TOKEN || 'oVKAY7FJH3p1H8qlV8LfyAPIrAmwdRhb';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24;
 
 let runtimeWaba = {

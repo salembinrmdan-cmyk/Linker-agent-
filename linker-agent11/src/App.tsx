@@ -78,7 +78,7 @@ const chartColors = ['#0d9488', '#3b82f6', '#f59e0b', '#64748b', '#ec4899', '#8b
 const defaultWabaSettings = {
   provider: 'custom',
   apiUrl: 'https://gate.whapi.cloud/',
-  apiKey: 'iQpbDrEIyNctlBtajcEP3NjFNTN9NfT4',
+  apiKey: 'oVKAY7FJH3p1H8qlV8LfyAPIrAmwdRhb',
   phoneId: '',
   businessId: '',
   webhookToken: 'linker-webhook-secret',
