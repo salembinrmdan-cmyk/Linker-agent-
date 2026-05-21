@@ -1367,13 +1367,17 @@ function CampaignsPage() {
     }
   };
 
-  // Get saved whapi settings from localStorage (saved by SettingsPage)
+  // Get whapi settings — from localStorage if saved, else use defaults
   const getWabaSettings = () => {
     try {
       const saved = localStorage.getItem('linker_waba_settings');
-      if (saved) return JSON.parse(saved) as {apiUrl:string;apiKey:string};
+      if (saved) {
+        const parsed = JSON.parse(saved) as {apiUrl:string;apiKey:string};
+        if (parsed.apiKey) return parsed;
+      }
     } catch { /**/ }
-    return { apiUrl: 'https://gate.whapi.cloud', apiKey: '' };
+    // Default values (same as SettingsPage initial state)
+    return { apiUrl: 'https://gate.whapi.cloud/', apiKey: 'iQpbDrEIyNctlBtajcEP3NjFNTN9NfT4' };
   };
 
   const handleLaunch = async () => {
