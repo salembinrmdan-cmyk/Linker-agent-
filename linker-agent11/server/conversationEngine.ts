@@ -309,7 +309,7 @@ export function determineNextState(currentState: SurveyState, input: string, dat
   switch (currentState) {
     case 'GREETING': {
       const approved = parseApproval(input);
-      return approved === false ? 'REJECTED' : 'APPROVAL';
+      return approved === false ? 'REJECTED' : 'ASK_PLATFORMS';
     }
     case 'APPROVAL': return 'ASK_PLATFORMS';
     case 'ASK_PLATFORMS': {

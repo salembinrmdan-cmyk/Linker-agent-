@@ -158,14 +158,47 @@ export function createServerApp() {
   });
 
   // ─── whapi config (read from env or defaults) ────────────────────────────
-  const WHAPI_URL = (process.env.WHATSAPP_API_URL || 'https://gate.whapi.cloud').replace(/\/$/, '');
-  const WHAPI_TOKEN = process.env.WHATSAPP_API_TOKEN || 'iQpbDrEIyNctlBtajcEP3NjFNTN9NfT4';
+  const runtimeWaba = {
+    apiUrl: (process.env.WHATSAPP_API_URL || 'https://gate.whapi.cloud').replace(/\/$/, ''),
+    apiToken: process.env.WHATSAPP_API_TOKEN || 'iQpbDrEIyNctlBtajcEP3NjFNTN9NfT4',
+  };
+
+  function parseNumberedOptions(text: string) {
+    const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
+    const options = lines
+      .map(line => {
+        const match = line.match(/^(?:\d+|[0-9]+️⃣)\s*[\)\.\-:]?\s*(.+)$/u);
+        return match ? match[1].trim() : '';
+      })
+      .filter(Boolean);
+    return options.length >= 2 ? options : [];
+  }
 
   async function sendWhapiMessage(to: string, text: string) {
     try {
-      const res = await fetch(`${WHAPI_URL}/messages/text`, {
+      const options = parseNumberedOptions(text);
+      if (options.length > 0) {
+        const interactiveRes = await fetch(`${runtimeWaba.apiUrl}/messages/interactive`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${runtimeWaba.apiToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to,
+            type: 'list',
+            header: { type: 'text', text: 'اختر إجابتك' },
+            body: { text },
+            action: {
+              button: 'عرض الخيارات',
+              sections: [{ title: 'خيارات الاستبيان', rows: options.map((title, i) => ({ id: `opt_${i+1}`, title })) }],
+            },
+          }),
+        });
+        if (interactiveRes.ok) return true;
+        console.error('[whapi] interactive send failed:', interactiveRes.status, await interactiveRes.text());
+      }
+
+      const res = await fetch(`${runtimeWaba.apiUrl}/messages/text`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${WHAPI_TOKEN}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${runtimeWaba.apiToken}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ to, body: text }),
       });
       if (!res.ok) console.error('[whapi] send failed:', res.status, await res.text());
@@ -190,7 +223,11 @@ export function createServerApp() {
     const interactive = msg.interactive as Record<string, unknown> | undefined;
     if (interactive?.type === 'button_reply') {
       const reply = interactive.button_reply as Record<string, unknown>;
-      return { phone: from, text: stringField(reply?.title) || '' };
+      return { phone: from, text: stringField(reply?.title || reply?.id) || '' };
+    }
+    if (interactive?.type === 'list_reply') {
+      const reply = interactive.list_reply as Record<string, unknown>;
+      return { phone: from, text: stringField(reply?.title || reply?.id || reply?.description) || '' };
     }
 
     // Plain text
@@ -218,22 +255,10 @@ export function createServerApp() {
         return;
       }
 
-      // Legacy format (direct phone+message from our own campaign launcher)
+      // Legacy/Direct format support
       const phone = stringField(body.phone);
       const message = stringField(body.message);
-      const campaignId = stringField(body.campaignId);
-      const profile: CustomerProfile = {
-        name: stringField(body.name) || undefined,
-        city: stringField(body.city) || undefined,
-      };
-
       if (!phone || !message) return;
-
-      if (campaignId && message === 'START_CAMPAIGN') {
-        const greeting = await ConversationEngine.startConversation(phone, campaignId, profile);
-        await sendWhapiMessage(phone, greeting);
-        return;
-      }
 
       const reply = await ConversationEngine.handleIncomingMessage(phone, message);
       if (reply) await sendWhapiMessage(phone, reply);
@@ -262,12 +287,6 @@ export function createServerApp() {
         if (phone.length < 9) continue;
 
         // Start conversation session
-        await ConversationEngine.startConversation(phone, campaignId, {
-          name: customer.name,
-          city: customer.city,
-        });
-
-        // Send greeting via whapi
         const greeting = await ConversationEngine.startConversation(phone, campaignId, {
           name: customer.name,
           city: customer.city,
@@ -372,27 +391,11 @@ export function createServerApp() {
 
   app.post('/api/admin/settings/save', async (request, response) => {
     const { profile, waba, webhookUrl } = request.body || {};
-    response.json({ ok: true, saved: { profile, waba, webhookUrl } });
-  });
-
-  // Alias for Vercel standalone function — same handler, works in local dev too
-  app.post('/api/test-connection', async (request, response) => {
-    const { provider, apiKey, apiUrl } = request.body || {};
-    if (!apiKey) { response.status(400).json({ ok: false, message: 'Missing API Key' }); return; }
-    const currentProvider = stringField(provider) || 'meta';
-    if (currentProvider !== 'custom') {
-      response.json({ ok: true, connected: true, message: 'تم التحقق من المزود المحدد' });
-      return;
-    }
-    const normalizedUrl = normalizeBaseUrl(stringField(apiUrl) || 'https://gate.whapi.cloud/');
-    const result = await testCustomProviderConnection(normalizedUrl, stringField(apiKey));
-    if (!result.ok) {
-      response.status(502).json({ ok: false, connected: false, message: result.message, attempts: result.attempts });
-      return;
-    }
-    const channelStatus = 'channelStatus' in result ? result.channelStatus : undefined;
-    const statusNote = channelStatus && channelStatus !== 'متصل' ? ` — حالة القناة: ${channelStatus}` : '';
-    response.json({ ok: true, connected: true, message: `✅ تم الاتصال بنجاح${statusNote}`, channelStatus, status: result.status, attempts: result.attempts });
+    const nextApiUrl = normalizeBaseUrl(stringField(waba?.apiUrl) || runtimeWaba.apiUrl);
+    const nextToken = stringField(waba?.apiKey) || runtimeWaba.apiToken;
+    runtimeWaba.apiUrl = nextApiUrl;
+    runtimeWaba.apiToken = nextToken;
+    response.json({ ok: true, saved: { profile, waba, webhookUrl }, runtimeWaba: { apiUrl: runtimeWaba.apiUrl, hasToken: Boolean(runtimeWaba.apiToken) } });
   });
 
   app.post('/api/admin/settings/test-whatsapp', async (request, response) => {
@@ -429,23 +432,10 @@ export function createServerApp() {
       connected: true,
       provider: currentProvider,
       apiUrl: normalizedUrl,
-      message: `✅ تم الاتصال بنجاح عبر ${result.path} (${result.authMode})${"channelStatus" in result && result.channelStatus && result.channelStatus !== "متصل" ? ` — حالة القناة: ${result.channelStatus}` : ""}`,
-      channelStatus: "channelStatus" in result ? result.channelStatus : undefined,
+      message: `Connection successful via ${result.path} (${result.authMode})`,
       status: result.status,
       attempts: result.attempts,
     });
-  });
-
-  // ─── Global 4-arg Error Handler (must be LAST) ───────────────────────────
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  app.use((err: any, _req: any, res: any, _next: any) => {
-    console.error('[Express Error]', err?.stack || err?.message || err);
-    if (!res.headersSent) {
-      res.status(err?.status || 500).json({
-        ok: false,
-        message: err?.message || 'Internal server error',
-      });
-    }
   });
 
   return app;
