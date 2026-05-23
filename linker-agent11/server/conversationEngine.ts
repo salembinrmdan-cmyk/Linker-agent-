@@ -205,7 +205,7 @@ const brokerAliases = [
   'وسيط', 'وسيطة', 'مندوب', 'مندوبة', 'مندوبي', 'مندوبتي',
   'بنت تطلب', 'ولد يطلب', 'شخص يطلب', 'وحدة تطلب', 'واحد يطلب',
   'أخت تطلب', 'خالة تطلب', 'صديقة تطلب', 'صاحب يطلب',
-  'حساب', 'صفحة', 'متجر', 'بائع', 'بائعة', 'تاجر', 'تاجرة',
+  'حساب', 'حساب يطلب', 'صفحة', 'صفحة طلبات', 'متجر', 'متجر إنستغرام', 'متجر انستغرام', 'بائع', 'بائعة', 'تاجر', 'تاجرة',
   'انستا', 'انستغرام', 'إنستغرام', 'انستقرام',
 ];
 const mixedAliases = ['مختلط', 'أحيان', 'احيان', 'مرات', 'أحيانا'];
@@ -222,7 +222,7 @@ function extractBrokerType(input: string): string {
   if (containsAny(input, ['مندوبة', 'وسيطة', 'بنت', 'أخت', 'خالة', 'صديقة', 'وحدة', 'بائعة', 'تاجرة']))
     return 'individual_female';
   if (containsAny(input, ['مندوب', 'ولد', 'شخص', 'واحد', 'صاحب'])) return 'individual_male';
-  if (containsAny(input, ['انستا', 'انستغرام', 'إنستغرام', 'انستقرام', 'صفحة'])) return 'instagram_store';
+  if (containsAny(input, ['انستا', 'انستغرام', 'إنستغرام', 'انستقرام', 'صفحة', 'حساب', 'صفحة طلبات', 'متجر إنستغرام', 'متجر انستغرام'])) return 'instagram_store';
   if (containsAny(input, ['واتس', 'واتساب', 'whatsapp'])) return 'whatsapp_seller';
   if (containsAny(input, ['تيليجرام', 'تليجرام', 'telegram'])) return 'telegram_seller';
   if (containsAny(input, ['تيك', 'تيك توك', 'tiktok'])) return 'tiktok_seller';

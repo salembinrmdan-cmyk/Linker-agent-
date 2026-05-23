@@ -1,7 +1,15 @@
 import 'dotenv/config';
 import express from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import cors from 'cors';
-import { ConversationEngine, getSurveyConfig, updateSurveyConfig, resetSurveyConfig } from './conversationEngine';
+import {
+  ConversationEngine,
+  createConversationEngine,
+  getSurveyConfig,
+  updateSurveyConfig,
+  resetSurveyConfig,
+  type ConversationStore,
+} from './conversationEngine';
 import { MarketIntelligenceStore } from './marketIntelligenceStore';
 
 import { qualityMonitor, campaignScheduler, canSendNow, getMessageForPhase, warmUpSchedule, humanizationEngine, hasSpamKeywords } from './messagingEngine';
@@ -11,8 +19,42 @@ function stringField(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function normalizeBaseUrl(url: string): string {
-  return url.endsWith('/') ? url.slice(0, -1) : url;
+function hasDatabaseConfig() {
+  return Boolean(process.env.DATABASE_URL);
+}
+
+function normalizePhone(value: unknown): string {
+  let digits = stringField(value).replace(/\D/g, '');
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  if (digits.length === 9 && digits.startsWith('7')) digits = `967${digits}`;
+  return digits;
+}
+
+function isValidPhone(phone: string): boolean {
+  return phone.length >= 9 && phone.length <= 15;
+}
+
+function normalizeProviderUrl(value: string): string {
+  const parsed = new URL(value);
+  if (!['https:', 'http:'].includes(parsed.protocol)) {
+    throw new Error('Provider URL must use http or https');
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  const isLocalHost = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  const isPrivateHost =
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(host);
+
+  if (process.env.NODE_ENV === 'production' && (isLocalHost || isPrivateHost)) {
+    throw new Error('Provider URL cannot target local or private networks in production');
+  }
+
+  parsed.pathname = parsed.pathname.replace(/\/$/, '');
+  parsed.search = '';
+  parsed.hash = '';
+  return parsed.toString().replace(/\/$/, '');
 }
 
 function isWhapiProvider(apiUrl: string): boolean {
@@ -142,73 +184,171 @@ async function testCustomProviderConnection(apiUrl: string, apiKey: string) {
   };
 }
 
-function createCorsOptions() {
-  return { credentials: true, origin(_origin: string | undefined, callback: (err: Error | null, ok?: boolean) => void) { callback(null, true); } };
+type MarketStore = typeof MarketIntelligenceStore;
+
+interface ServerAppOptions {
+  conversationStore?: ConversationStore;
+  marketStore?: MarketStore;
 }
 
-export function createServerApp() {
-  const app = express();
+const processedWebhookMessageIds = new Map<string, number>();
+const WEBHOOK_DEDUP_TTL_MS = 24 * 60 * 60 * 1000;
 
+function rememberWebhookMessage(messageId: string): boolean {
+  const now = Date.now();
+  for (const [id, timestamp] of processedWebhookMessageIds) {
+    if (now - timestamp > WEBHOOK_DEDUP_TTL_MS) processedWebhookMessageIds.delete(id);
+  }
+  if (processedWebhookMessageIds.has(messageId)) return false;
+  processedWebhookMessageIds.set(messageId, now);
+  return true;
+}
+
+function createCorsOptions() {
+  const configuredOrigins = (process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  const allowLocalDev = process.env.NODE_ENV !== 'production';
+
+  return {
+    credentials: false,
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-API-Key', 'X-Webhook-Token'],
+    origin(origin: string | undefined, callback: (err: Error | null, ok?: boolean) => void) {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+
+      const isAllowedOrigin = configuredOrigins.includes(origin);
+      const isLocalDevOrigin = allowLocalDev && /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin);
+
+      if (isAllowedOrigin || isLocalDevOrigin) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error('CORS origin not allowed'));
+    },
+  };
+}
+
+function isAuthorizedAdminRequest(request: Request): boolean {
+  const expectedKey = process.env.ADMIN_API_KEY;
+  if (!expectedKey) return true;
+
+  const apiKey = stringField(request.header('x-admin-api-key'));
+  const bearer = stringField(request.header('authorization')).replace(/^Bearer\s+/i, '');
+  return apiKey === expectedKey || bearer === expectedKey;
+}
+
+function isAuthorizedWebhookRequest(request: Request): boolean {
+  const expectedToken = process.env.WEBHOOK_VERIFY_TOKEN || process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
+  if (!expectedToken) return true;
+
+  const candidates = [
+    stringField(request.header('x-webhook-token')),
+    stringField(request.query.verify_token),
+    stringField(request.query.token),
+  ];
+  return candidates.includes(expectedToken);
+}
+
+function securityHeaders(_request: Request, response: Response, next: NextFunction) {
+  response.setHeader('X-Content-Type-Options', 'nosniff');
+  response.setHeader('X-Frame-Options', 'DENY');
+  response.setHeader('Referrer-Policy', 'no-referrer');
+  response.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+}
+
+export function createServerApp(options: ServerAppOptions = {}) {
+  const app = express();
+  const conversationEngine = options.conversationStore
+    ? createConversationEngine(options.conversationStore)
+    : ConversationEngine;
+  const marketStore = options.marketStore ?? MarketIntelligenceStore;
+
+  app.disable('x-powered-by');
+  app.use(securityHeaders);
   app.use(express.json({ limit: '1mb' }));
+  app.use((error: Error, request: Request, response: Response, next: NextFunction) => {
+    if (error instanceof SyntaxError && 'body' in error) {
+      void marketStore.logSystemEvent({
+        level: 'warn',
+        type: 'invalid_json',
+        route: request.path,
+        reason: error.message,
+        action: 'request_rejected',
+      });
+      response.status(400).json({ ok: false, message: 'Invalid JSON body' });
+      return;
+    }
+    next(error);
+  });
   app.use(cors(createCorsOptions()));
+
+  app.use('/api/admin', (request, response, next) => {
+    if (!isAuthorizedAdminRequest(request)) {
+      void marketStore.logSystemEvent({
+        level: 'warn',
+        type: 'unauthorized_admin_request',
+        route: request.path,
+        action: 'request_rejected',
+      });
+      response.status(401).json({ ok: false, message: 'Unauthorized' });
+      return;
+    }
+    next();
+  });
+
+  app.use('/api/campaigns', (request, response, next) => {
+    if (!isAuthorizedAdminRequest(request)) {
+      void marketStore.logSystemEvent({
+        level: 'warn',
+        type: 'unauthorized_campaign_request',
+        route: request.path,
+        action: 'request_rejected',
+      });
+      response.status(401).json({ ok: false, message: 'Unauthorized' });
+      return;
+    }
+    next();
+  });
 
   // Health check — no DB, no auth, always first
   app.get('/api/health', (_req, res) => {
-    res.json({ ok: true, service: 'Linker Agent API', timestamp: new Date().toISOString() });
+    res.json({
+      ok: true,
+      service: 'Linker Agent API',
+      databaseConfigured: hasDatabaseConfig(),
+      whatsappConfigured: Boolean(process.env.WHATSAPP_API_TOKEN),
+      timestamp: new Date().toISOString(),
+    });
   });
 
   // ─── whapi config (read from env or defaults) ────────────────────────────
   const runtimeWaba = {
-    apiUrl: (process.env.WHATSAPP_API_URL || 'https://gate.whapi.cloud').replace(/\/$/, ''),
-    apiToken: process.env.WHATSAPP_API_TOKEN || 'oVKAY7FJH3p1H8qlV8LfyAPIrAmwdRhb',
+    apiUrl: normalizeProviderUrl(process.env.WHATSAPP_API_URL || 'https://gate.whapi.cloud'),
+    apiToken: process.env.WHATSAPP_API_TOKEN || '',
   };
 
   function parseNumberedOptions(text: string) {
     const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
     const options = lines
       .map(line => {
-        const match = line.match(/^(?:[0-9]+️⃣|🔟|\d+)\s*[).:-]?\s*(.+)$/u);
+        const match = line.match(/^\s*(?:\d+)(?:\uFE0F?\u20E3)?\s*[\)\.\-:]?\s*(.+)$/u);
         return match ? match[1].trim() : '';
       })
       .filter(Boolean);
     return options.length >= 2 ? options : [];
   }
 
-  function stripNumberedOptions(text: string) {
-    return text
-      .split('\n')
-      .filter(line => !line.trim().match(/^(?:[0-9]+️⃣|🔟|\d+)\s*[).:-]?\s*(.+)$/u))
-      .join('\n')
-      .trim();
-  }
-
-  function compactInteractiveTitle(title: string) {
-    return title.length > 24 ? `${title.slice(0, 21)}...` : title;
-  }
-
   async function sendWhapiMessage(to: string, text: string) {
     try {
+      if (!runtimeWaba.apiToken) return false;
       const options = parseNumberedOptions(text);
-      if (options.length === 0 && text.includes('هل ممكن نبدأ')) {
-        const approvalRes = await fetch(`${runtimeWaba.apiUrl}/messages/interactive`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${runtimeWaba.apiToken}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            to,
-            type: 'button',
-            body: { text },
-            action: {
-              buttons: [
-                { type: 'quick_reply', id: 'survey_start_yes', title: 'نعم، أبدأ' },
-                { type: 'quick_reply', id: 'survey_start_later', title: 'لاحقاً' },
-              ],
-            },
-          }),
-        });
-        if (approvalRes.ok) return true;
-        console.error('[whapi] approval buttons failed:', approvalRes.status, await approvalRes.text());
-      }
-
       if (options.length > 0) {
         const interactiveRes = await fetch(`${runtimeWaba.apiUrl}/messages/interactive`, {
           method: 'POST',
@@ -216,15 +356,11 @@ export function createServerApp() {
           body: JSON.stringify({
             to,
             type: 'list',
-            body: { text: stripNumberedOptions(text) || text },
+            header: { type: 'text', text: 'اختر إجابتك' },
+            body: { text },
             action: {
-              list: {
-                label: 'اختر الإجابة',
-                sections: [{
-                  title: 'خيارات الاستبيان',
-                  rows: options.map((title, i) => ({ id: `opt_${i+1}`, title: compactInteractiveTitle(title), description: title })),
-                }],
-              },
+              button: 'عرض الخيارات',
+              sections: [{ title: 'خيارات الاستبيان', rows: options.map((title, i) => ({ id: `opt_${i+1}`, title })) }],
             },
           }),
         });
@@ -246,34 +382,25 @@ export function createServerApp() {
   }
 
   // Parse whapi reply message text & extract button reply if any
-  function extractWhapiMessage(body: Record<string, unknown>): { phone: string; text: string } | null {
+  function extractWhapiMessage(body: Record<string, unknown>): { phone: string; text: string; messageId?: string } | null {
     // whapi sends messages array
     const messages = body.messages as Array<Record<string, unknown>> | undefined;
     const msg = messages?.[0];
     if (!msg) return null;
 
-    const from = stringField(msg.from || msg.chat_id);
+    const from = normalizePhone(msg.from || msg.chat_id);
     if (!from) return null;
-
-    const reply = msg.reply as Record<string, unknown> | undefined;
-    const buttonReply = reply?.buttons_reply as Record<string, unknown> | undefined;
-    if (buttonReply) {
-      return { phone: from, text: stringField(buttonReply?.title || buttonReply?.id) || '' };
-    }
-    const listReply = reply?.list_reply as Record<string, unknown> | undefined;
-    if (listReply) {
-      return { phone: from, text: stringField(listReply?.title || listReply?.id || listReply?.description) || '' };
-    }
+    const messageId = stringField(msg.id || msg.message_id || msg.messageId);
 
     // Button reply
     const interactive = msg.interactive as Record<string, unknown> | undefined;
     if (interactive?.type === 'button_reply') {
       const reply = interactive.button_reply as Record<string, unknown>;
-      return { phone: from, text: stringField(reply?.title || reply?.id) || '' };
+      return { phone: from, text: stringField(reply?.title || reply?.id) || '', messageId };
     }
     if (interactive?.type === 'list_reply') {
       const reply = interactive.list_reply as Record<string, unknown>;
-      return { phone: from, text: stringField(reply?.title || reply?.id || reply?.description) || '' };
+      return { phone: from, text: stringField(reply?.title || reply?.id || reply?.description) || '', messageId };
     }
 
     // Plain text
@@ -281,35 +408,126 @@ export function createServerApp() {
     const text = stringField(textObj?.body || msg.body || msg.text);
     if (!text) return null;
 
-    return { phone: from, text };
+    return { phone: from, text, messageId };
   }
 
   // ─── whapi Webhook (receives customer replies) ───────────────────────────
+  app.get('/api/integrations/survey-agent/webhook', (request, response) => {
+    if (!isAuthorizedWebhookRequest(request)) {
+      response.status(401).json({ ok: false, message: 'Unauthorized webhook verification' });
+      return;
+    }
+    response.json({
+      ok: true,
+      challenge: stringField(request.query.challenge) || undefined,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
   app.post('/api/integrations/survey-agent/webhook', async (request, response) => {
-    // Always respond 200 immediately so whapi doesn't retry
+    // Always respond 200 immediately so providers do not retry while we process.
     response.status(200).json({ ok: true });
 
     try {
+      if (!isAuthorizedWebhookRequest(request)) {
+        await marketStore.logSystemEvent({
+          level: 'warn',
+          type: 'unauthorized_webhook',
+          route: request.path,
+          action: 'request_acknowledged_ignored',
+        });
+        return;
+      }
+      if (!hasDatabaseConfig() && !options.conversationStore) {
+        await marketStore.logSystemEvent({
+          level: 'error',
+          type: 'webhook_database_unavailable',
+          route: request.path,
+          action: 'message_not_processed',
+        });
+        return;
+      }
+
       const body = request.body as Record<string, unknown>;
 
       // Handle whapi format (messages array)
       const parsed = extractWhapiMessage(body);
       if (parsed) {
-        const { phone, text } = parsed;
-        const reply = await ConversationEngine.handleIncomingMessage(phone, text);
-        if (reply) await sendWhapiMessage(phone, reply);
+        const { phone, text, messageId } = parsed;
+        if (!isValidPhone(phone)) {
+          await marketStore.logSystemEvent({
+            level: 'warn',
+            type: 'invalid_inbound_phone',
+            route: request.path,
+            message: text,
+            action: 'message_ignored',
+          });
+          return;
+        }
+
+        if (messageId) {
+          const alreadyProcessed = !rememberWebhookMessage(messageId) || await marketStore.hasProcessedWhatsappMessage(messageId);
+          if (alreadyProcessed) {
+            await marketStore.logWhatsappMessage({
+              providerMessageId: messageId,
+              direction: 'inbound',
+              phone,
+              status: 'duplicate',
+              text,
+              payload: body,
+            });
+            return;
+          }
+        }
+
+        await marketStore.logWhatsappMessage({
+          providerMessageId: messageId,
+          direction: 'inbound',
+          phone,
+          status: 'received',
+          text,
+          payload: body,
+        });
+
+        const reply = await conversationEngine.handleIncomingMessage(phone, text);
+        if (reply) {
+          const sent = await sendWhapiMessage(phone, reply);
+          await marketStore.logWhatsappMessage({
+            direction: 'outbound',
+            phone,
+            status: sent ? 'sent' : 'failed',
+            text: reply,
+            error: sent ? undefined : 'Provider send failed or token missing',
+          });
+        }
         return;
       }
 
       // Legacy/Direct format support
-      const phone = stringField(body.phone);
+      const phone = normalizePhone(body.phone);
       const message = stringField(body.message);
       if (!phone || !message) return;
 
-      const reply = await ConversationEngine.handleIncomingMessage(phone, message);
-      if (reply) await sendWhapiMessage(phone, reply);
+      const reply = await conversationEngine.handleIncomingMessage(phone, message);
+      if (reply) {
+        const sent = await sendWhapiMessage(phone, reply);
+        await marketStore.logWhatsappMessage({
+          direction: 'outbound',
+          phone,
+          status: sent ? 'sent' : 'failed',
+          text: reply,
+          error: sent ? undefined : 'Provider send failed or token missing',
+        });
+      }
 
     } catch (error) {
+      void marketStore.logSystemEvent({
+        level: 'error',
+        type: 'webhook_processing_failed',
+        route: request.path,
+        reason: error instanceof Error ? error.message : String(error),
+        action: 'request_acknowledged',
+      });
       console.error('[survey-webhook]', error);
     }
   });
@@ -326,26 +544,106 @@ export function createServerApp() {
         response.status(400).json({ ok: false, message: 'No customers provided' });
         return;
       }
+      const effectiveApiUrl = runtimeWaba.apiUrl;
+      const effectiveApiToken = runtimeWaba.apiToken;
+
+      if (!effectiveApiToken) {
+        response.status(400).json({ ok: false, message: 'يرجى إدخال API Token في صفحة الإعدادات أولاً' });
+        return;
+      }
+      if (!hasDatabaseConfig() && !options.conversationStore) {
+        response.status(503).json({ ok: false, message: 'DATABASE_URL is not configured', code: 'DATABASE_UNAVAILABLE' });
+        return;
+      }
+
+      async function sendWithToken(to: string, text: string) {
+        try {
+          const options = parseNumberedOptions(text);
+          if (options.length > 0) {
+            const interactiveRes = await fetch(`${effectiveApiUrl}/messages/interactive`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${effectiveApiToken}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                to,
+                type: 'list',
+                header: { type: 'text', text: 'اختر إجابتك' },
+                body: { text },
+                action: {
+                  button: 'عرض الخيارات',
+                  sections: [{ title: 'خيارات الاستبيان', rows: options.map((title, i) => ({ id: `opt_${i+1}`, title })) }],
+                },
+              }),
+            });
+            if (interactiveRes.ok) return true;
+            const errText = await interactiveRes.text();
+            console.error('[whapi] interactive send failed:', interactiveRes.status, errText);
+            if (interactiveRes.status === 401 || interactiveRes.status === 403) {
+              throw new Error(`❌ ${parseWhapiError(interactiveRes.status, errText)}`);
+            }
+          }
+
+          const res = await fetch(`${effectiveApiUrl}/messages/text`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${effectiveApiToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ to, body: text }),
+          });
+          if (!res.ok) {
+            const errText = await res.text();
+            console.error('[whapi] send failed:', res.status, errText);
+            if (res.status === 401 || res.status === 403) {
+              throw new Error(`❌ ${parseWhapiError(res.status, errText)}`);
+            }
+            return false;
+          }
+          return true;
+        } catch (err) {
+          console.error('[whapi] send error:', err);
+          throw err;
+        }
+      }
 
       let queued = 0;
+      const errors: string[] = [];
       for (const customer of customers) {
-        const phone = customer.phone.replace(/\D/g, '');
-        if (phone.length < 9) continue;
+        const phone = normalizePhone(customer.phone);
+        if (!isValidPhone(phone)) continue;
 
-        // Start conversation session
-        const greeting = await ConversationEngine.startConversation(phone, campaignId, {
-          name: customer.name,
-          city: customer.city,
-        });
-        await sendWhapiMessage(phone, greeting);
-        queued++;
+        try {
+          const greeting = await conversationEngine.startConversation(phone, campaignId, {
+            name: customer.name,
+            city: customer.city,
+          });
+          const sent = await sendWithToken(phone, greeting);
+          await marketStore.logWhatsappMessage({
+            direction: 'outbound',
+            phone,
+            campaignId,
+            status: sent ? 'sent' : 'failed',
+            text: greeting,
+            error: sent ? undefined : 'Provider send failed',
+          });
+          if (sent) queued++;
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : 'Error';
+          errors.push(errMsg);
+          if (errMsg.includes('401') || errMsg.includes('403') || errMsg.includes('Token')) {
+            response.status(401).json({ ok: false, message: errMsg, queued });
+            return;
+          }
+        }
 
-        // Delay between sends
         await new Promise(r => setTimeout(r, 2500));
       }
 
-      response.json({ ok: true, queued });
+      response.json({ ok: true, queued, errors: errors.length > 0 ? errors : undefined });
     } catch (err) {
+      void marketStore.logSystemEvent({
+        level: 'error',
+        type: 'campaign_launch_failed',
+        route: request.path,
+        reason: err instanceof Error ? err.message : String(err),
+        action: 'request_failed',
+      });
       console.error('[campaign-launch]', err);
       response.status(500).json({ ok: false, message: err instanceof Error ? err.message : 'Error' });
     }
@@ -353,27 +651,57 @@ export function createServerApp() {
 
   app.get('/api/admin/market-intelligence/dashboard', async (_request, response) => {
     try {
-      const metrics = await MarketIntelligenceStore.getDashboardMetrics();
+      if (!hasDatabaseConfig() && !options.marketStore) {
+        response.status(503).json({ ok: false, message: 'DATABASE_URL is not configured', code: 'DATABASE_UNAVAILABLE' });
+        return;
+      }
+      const metrics = await marketStore.getDashboardMetrics();
       response.json(metrics);
-    } catch {
+    } catch (error) {
+      void marketStore.logSystemEvent({
+        level: 'error',
+        type: 'dashboard_metrics_failed',
+        route: '/api/admin/market-intelligence/dashboard',
+        reason: error instanceof Error ? error.message : String(error),
+      });
       response.status(500).json({ ok: false, message: 'Error fetching metrics' });
     }
   });
 
   app.get('/api/admin/market-intelligence/analytics', async (_request, response) => {
     try {
-      const analytics = await MarketIntelligenceStore.getAnalyticsSnapshot();
+      if (!hasDatabaseConfig() && !options.marketStore) {
+        response.status(503).json({ ok: false, message: 'DATABASE_URL is not configured', code: 'DATABASE_UNAVAILABLE' });
+        return;
+      }
+      const analytics = await marketStore.getAnalyticsSnapshot();
       response.json(analytics);
-    } catch {
+    } catch (error) {
+      void marketStore.logSystemEvent({
+        level: 'error',
+        type: 'analytics_snapshot_failed',
+        route: '/api/admin/market-intelligence/analytics',
+        reason: error instanceof Error ? error.message : String(error),
+      });
       response.status(500).json({ ok: false, message: 'Error fetching analytics' });
     }
   });
 
   app.get('/api/admin/market-intelligence/responses', async (_request, response) => {
     try {
-      const responses = await MarketIntelligenceStore.getAllResponses();
+      if (!hasDatabaseConfig() && !options.marketStore) {
+        response.status(503).json({ ok: false, message: 'DATABASE_URL is not configured', code: 'DATABASE_UNAVAILABLE' });
+        return;
+      }
+      const responses = await marketStore.getAllResponses();
       response.json(responses);
-    } catch {
+    } catch (error) {
+      void marketStore.logSystemEvent({
+        level: 'error',
+        type: 'responses_fetch_failed',
+        route: '/api/admin/market-intelligence/responses',
+        reason: error instanceof Error ? error.message : String(error),
+      });
       response.status(500).json({ ok: false, message: 'Error fetching responses' });
     }
   });
@@ -436,12 +764,28 @@ export function createServerApp() {
   });
 
   app.post('/api/admin/settings/save', async (request, response) => {
-    const { profile, waba, webhookUrl } = request.body || {};
-    const nextApiUrl = normalizeBaseUrl(stringField(waba?.apiUrl) || runtimeWaba.apiUrl);
-    const nextToken = stringField(waba?.apiKey) || runtimeWaba.apiToken;
-    runtimeWaba.apiUrl = nextApiUrl;
-    runtimeWaba.apiToken = nextToken;
-    response.json({ ok: true, saved: { profile, waba, webhookUrl }, runtimeWaba: { apiUrl: runtimeWaba.apiUrl, hasToken: Boolean(runtimeWaba.apiToken) } });
+    try {
+      const { profile, waba, webhookUrl } = request.body || {};
+      const nextApiUrl = normalizeProviderUrl(stringField(waba?.apiUrl) || runtimeWaba.apiUrl);
+      const nextToken = stringField(waba?.apiKey);
+      runtimeWaba.apiUrl = nextApiUrl;
+      if (nextToken) runtimeWaba.apiToken = nextToken;
+      response.json({
+        ok: true,
+        saved: {
+          profile,
+          webhookUrl,
+          waba: {
+            provider: stringField(waba?.provider) || 'custom',
+            apiUrl: runtimeWaba.apiUrl,
+            hasToken: Boolean(runtimeWaba.apiToken),
+          },
+        },
+        runtimeWaba: { apiUrl: runtimeWaba.apiUrl, hasToken: Boolean(runtimeWaba.apiToken) },
+      });
+    } catch (error) {
+      response.status(400).json({ ok: false, message: error instanceof Error ? error.message : 'Invalid settings' });
+    }
   });
 
   app.post('/api/admin/settings/test-whatsapp', async (request, response) => {
@@ -459,7 +803,13 @@ export function createServerApp() {
       return;
     }
 
-    const normalizedUrl = normalizeBaseUrl(stringField(apiUrl) || 'https://gate.whapi.cloud/');
+    let normalizedUrl: string;
+    try {
+      normalizedUrl = normalizeProviderUrl(stringField(apiUrl) || 'https://gate.whapi.cloud/');
+    } catch (error) {
+      response.status(400).json({ ok: false, connected: false, message: error instanceof Error ? error.message : 'Invalid provider URL' });
+      return;
+    }
     const result = await testCustomProviderConnection(normalizedUrl, stringField(apiKey));
     if (!result.ok) {
       response.status(502).json({
@@ -482,6 +832,22 @@ export function createServerApp() {
       status: result.status,
       attempts: result.attempts,
     });
+  });
+
+  app.use((request, response) => {
+    response.status(404).json({ ok: false, message: `Route not found: ${request.path}` });
+  });
+
+  app.use((error: Error, request: Request, response: Response, _next: NextFunction) => {
+    void marketStore.logSystemEvent({
+      level: 'error',
+      type: 'unhandled_server_error',
+      route: request.path,
+      reason: error.message,
+      action: 'request_failed',
+    });
+    if (response.headersSent) return;
+    response.status(500).json({ ok: false, message: 'Internal server error' });
   });
 
   return app;

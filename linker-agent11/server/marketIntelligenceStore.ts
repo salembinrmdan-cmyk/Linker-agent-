@@ -48,6 +48,31 @@ export interface SurveySession {
   customerId: string;
 }
 
+export interface SystemEventInput {
+  level: 'info' | 'warn' | 'error';
+  type: string;
+  route?: string;
+  customer?: string;
+  campaign?: string;
+  session?: string;
+  message?: string;
+  reason?: string;
+  action?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface WhatsappMessageInput {
+  providerMessageId?: string;
+  direction: 'inbound' | 'outbound';
+  phone: string;
+  campaignId?: string;
+  sessionId?: string;
+  status: 'received' | 'sent' | 'failed' | 'duplicate';
+  text?: string;
+  error?: string;
+  payload?: Record<string, unknown>;
+}
+
 type SurveyResponseFieldData = Partial<{
   platforms: string | null;
   preferredPlatform: string | null;
@@ -215,6 +240,101 @@ async function recalculatePlatformBrokerRatio(platformName: string) {
 }
 
 export const MarketIntelligenceStore = {
+  async logSystemEvent(input: SystemEventInput) {
+    const event = {
+      ...input,
+      at: new Date().toISOString(),
+    };
+
+    if (!process.env.DATABASE_URL) {
+      console[input.level === 'error' ? 'error' : input.level === 'warn' ? 'warn' : 'log']('[system-event]', event);
+      return null;
+    }
+
+    try {
+      return await prisma.systemEventLog.create({
+        data: {
+          level: input.level,
+          type: input.type,
+          route: input.route,
+          customer: input.customer,
+          campaign: input.campaign,
+          session: input.session,
+          message: input.message,
+          reason: input.reason,
+          action: input.action,
+          metadata: input.metadata ? JSON.parse(JSON.stringify(input.metadata)) : undefined,
+        },
+      });
+    } catch (error) {
+      console.error('[system-event-log-failed]', event, error);
+      return null;
+    }
+  },
+
+  async logWhatsappMessage(input: WhatsappMessageInput) {
+    const payload = input.payload ? JSON.parse(JSON.stringify(input.payload)) : undefined;
+
+    if (!process.env.DATABASE_URL) {
+      console.log('[whatsapp-message]', {
+        ...input,
+        payload: payload ? '[payload]' : undefined,
+        at: new Date().toISOString(),
+      });
+      return null;
+    }
+
+    try {
+      if (input.providerMessageId) {
+        return await prisma.whatsappMessage.upsert({
+          where: { providerMessageId: input.providerMessageId },
+          update: {
+            status: input.status,
+            error: input.error,
+            text: input.text,
+            payload,
+          },
+          create: {
+            providerMessageId: input.providerMessageId,
+            direction: input.direction,
+            phone: input.phone,
+            campaignId: input.campaignId,
+            sessionId: input.sessionId,
+            status: input.status,
+            text: input.text,
+            error: input.error,
+            payload,
+          },
+        });
+      }
+
+      return await prisma.whatsappMessage.create({
+        data: {
+          direction: input.direction,
+          phone: input.phone,
+          campaignId: input.campaignId,
+          sessionId: input.sessionId,
+          status: input.status,
+          text: input.text,
+          error: input.error,
+          payload,
+        },
+      });
+    } catch (error) {
+      console.error('[whatsapp-message-log-failed]', { ...input, payload: payload ? '[payload]' : undefined }, error);
+      return null;
+    }
+  },
+
+  async hasProcessedWhatsappMessage(providerMessageId: string) {
+    if (!process.env.DATABASE_URL) return false;
+    const existing = await prisma.whatsappMessage.findUnique({
+      where: { providerMessageId },
+      select: { id: true },
+    });
+    return Boolean(existing);
+  },
+
   async ensureCampaign(campaignId: string, name = DEFAULT_CAMPAIGN_NAME) {
     return prisma.surveyCampaign.upsert({
       where: { id: campaignId },

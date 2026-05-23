@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createConversationEngine } from './conversationEngine';
-import type { CompleteSurveyArgs } from './marketIntelligenceStore';
+import { captureAnswer, createConversationEngine, type SessionData } from './conversationEngine';
+import type { CompleteSurveyArgs, SurveyResponseData } from './marketIntelligenceStore';
 
 test('conversation engine captures and completes a broker survey', async () => {
   const completedSurveys: CompleteSurveyArgs[] = [];
+  let savedSession: SessionData | null = null;
   const engine = createConversationEngine({
     async prepareSurveySession() {
       return { customerId: 'customer-1' };
@@ -16,10 +17,10 @@ test('conversation engine captures and completes a broker survey', async () => {
     async rejectSurvey() {
       return { id: 'rejected-1' };
     },
-    async loadSession() { return null; },
-    async saveSession() {},
-    async deleteSession() {},
-    async getActiveSessionCount() { return 0; },
+    async loadSession() { return savedSession; },
+    async saveSession(_phone, data) { savedSession = structuredClone(data); },
+    async deleteSession() { savedSession = null; },
+    async getActiveSessionCount() { return savedSession ? 1 : 0; },
   });
 
   const greeting = await engine.startConversation('777123456', 'campaign-1');
@@ -64,7 +65,16 @@ test('conversation engine captures and completes a broker survey', async () => {
   assert.equal(completedSurveys[0]?.data.mainProblem, 'تأخير التوصيل');
   assert.equal(completedSurveys[0]?.data.city, 'صنعاء');
   assert.equal(completedSurveys[0]?.data.directPurchaseProb, 'أكيد');
-  assert.equal(engine.getActiveConversationCount(), 0);
+  assert.equal(await engine.getActiveConversationCount(), 0);
+});
+
+test('purchase method aliases normalize to broker while preserving raw text', () => {
+  for (const value of ['وسيط', 'وسيطة', 'مندوب', 'مندوبة', 'شخص يطلب لي', 'حساب يطلب', 'متجر إنستغرام', 'صفحة طلبات']) {
+    const data: SurveyResponseData = {};
+    captureAnswer('ASK_PURCHASE_METHOD', value, data);
+    assert.equal(data.purchaseMethod, 'broker');
+    assert.equal(data.purchaseMethodRaw, value);
+  }
 });
 
 test('conversation engine returns null when no conversation is active', async () => {

@@ -118,3 +118,43 @@ model SurveySession {
 
   @@index([phone])
 }
+
+model WhatsappMessage {
+  id                String   @id @default(cuid())
+  providerMessageId String?  @unique
+  direction         String
+  phone             String
+  campaignId        String?
+  sessionId         String?
+  status            String
+  text              String?
+  error             String?
+  payload           Json?
+  createdAt         DateTime @default(now())
+
+  @@index([phone])
+  @@index([campaignId])
+  @@index([sessionId])
+  @@index([direction, status])
+}
+
+model SystemEventLog {
+  id        String   @id @default(cuid())
+  level     String
+  type      String
+  route     String?
+  customer  String?
+  campaign  String?
+  session   String?
+  message   String?
+  reason    String?
+  action    String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([level])
+  @@index([type])
+  @@index([createdAt])
+  @@index([campaign])
+  @@index([session])
+}

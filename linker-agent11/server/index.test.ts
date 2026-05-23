@@ -2,9 +2,46 @@ import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
 import test from 'node:test';
 import { createServerApp } from './app';
+import type { ConversationStore } from './conversationEngine';
+import { MarketIntelligenceStore } from './marketIntelligenceStore';
 
 async function withServer<T>(run: (baseUrl: string) => Promise<T>) {
-  const app = createServerApp();
+  const conversationStore: ConversationStore = {
+    async prepareSurveySession() { return { customerId: 'customer-1' }; },
+    async completeSurvey() { return { id: 'response-1' }; },
+    async rejectSurvey() { return { id: 'rejected-1' }; },
+    async loadSession() { return null; },
+    async saveSession() {},
+    async deleteSession() {},
+    async getActiveSessionCount() { return 0; },
+  };
+  const marketStore = {
+    ...MarketIntelligenceStore,
+    async logSystemEvent() { return null; },
+    async logWhatsappMessage() { return null; },
+    async hasProcessedWhatsappMessage() { return false; },
+    async getDashboardMetrics() {
+      return {
+        totalResponses: 0,
+        brokerDependencyRatio: 0,
+        topBrokers: [],
+        allBrokers: [],
+        directProbabilityRatio: 0,
+        recentResponses: [],
+        platformBreakdown: [],
+        cityBreakdown: [],
+        problemBreakdown: [],
+        paymentPreferenceBreakdown: [],
+        purchaseMethodBreakdown: [],
+        ageGroupBreakdown: [],
+        genderBreakdown: [],
+        brokerTypeBreakdown: [],
+        brokerChannelBreakdown: [],
+        brokerGenderBreakdown: [],
+      };
+    },
+  } as unknown as typeof MarketIntelligenceStore;
+  const app = createServerApp({ conversationStore, marketStore });
   const server = app.listen(0);
 
   try {

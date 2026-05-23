@@ -1,6 +1,6 @@
-import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import * as XLSX from 'xlsx';
-import { useState, createContext, useContext, type ReactNode } from 'react';
+﻿import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { readSheet } from 'read-excel-file/browser';
+import { useEffect, useRef, useState, createContext, useContext, type ReactNode } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -74,27 +74,6 @@ type MetricCardProps = {
 };
 
 const chartColors = ['#0d9488', '#3b82f6', '#f59e0b', '#64748b', '#ec4899', '#8b5cf6'];
-
-const defaultWabaSettings = {
-  provider: 'custom',
-  apiUrl: 'https://gate.whapi.cloud/',
-  apiKey: 'oVKAY7FJH3p1H8qlV8LfyAPIrAmwdRhb',
-  phoneId: '',
-  businessId: '',
-  webhookToken: 'linker-webhook-secret',
-};
-
-type WabaSettings = typeof defaultWabaSettings;
-
-function readStoredWabaSettings(): Partial<WabaSettings> {
-  if (typeof window === 'undefined') return {};
-  try {
-    const saved = window.localStorage.getItem('linker_waba_settings');
-    return saved ? JSON.parse(saved) as Partial<WabaSettings> : {};
-  } catch {
-    return {};
-  }
-}
 
 type FilterState = { period: string; city: string; platform: string };
 const FilterContext = createContext<{ filters: FilterState; setFilters: (f: Partial<FilterState>) => void }>({ filters: { period: 'آخر 30 يوم', city: 'كل المدن', platform: 'كل المنصات' }, setFilters: () => {} });
@@ -323,6 +302,67 @@ function downloadCampaignTemplate() {
   );
 }
 
+function parseCsvRows(text: string): string[][] {
+  const rows: string[][] = [];
+  let field = '';
+  let row: string[] = [];
+  let quoted = false;
+  const input = text.replace(/^\uFEFF/, '');
+
+  for (let i = 0; i < input.length; i += 1) {
+    const char = input[i];
+    const next = input[i + 1];
+
+    if (char === '"' && quoted && next === '"') {
+      field += '"';
+      i += 1;
+      continue;
+    }
+    if (char === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (char === ',' && !quoted) {
+      row.push(field.trim());
+      field = '';
+      continue;
+    }
+    if ((char === '\n' || char === '\r') && !quoted) {
+      if (char === '\r' && next === '\n') i += 1;
+      row.push(field.trim());
+      if (row.some(Boolean)) rows.push(row);
+      row = [];
+      field = '';
+      continue;
+    }
+    field += char;
+  }
+
+  row.push(field.trim());
+  if (row.some(Boolean)) rows.push(row);
+  return rows;
+}
+
+async function readCustomerFileRows(file: File): Promise<string[][]> {
+  if (/\.xlsx$/i.test(file.name)) {
+    const rows: unknown[][] = await readSheet(file);
+    return rows.map((row) => row.map((cell) => String(cell ?? '').trim()));
+  }
+
+  if (/\.csv$/i.test(file.name)) {
+    return parseCsvRows(await file.text());
+  }
+
+  throw new Error('Unsupported file type');
+}
+
+function normalizeCampaignPhone(value: unknown) {
+  let digits = String(value || '').replace(/\D/g, '');
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  if (digits.length === 9 && digits.startsWith('7')) digits = `967${digits}`;
+  return digits;
+}
+
 function ExportBtn({ onClick, label = 'تصدير Excel' }: { onClick: () => void; label?: string }) {
   return <button className="btn primary" onClick={onClick}><Download size={17} /> {label}</button>;
 }
@@ -436,6 +476,38 @@ function MetricCard({ icon: Icon, label, value, hint, delta, tone = 'teal' }: Me
   );
 }
 
+function SafeResponsiveContainer({ children }: { children: ReactNode }) {
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
+
+  useEffect(() => {
+    const node = frameRef.current;
+    if (!node) return;
+
+    const update = () => {
+      const box = node.getBoundingClientRect();
+      const width = Math.floor(box.width);
+      const height = Math.floor(box.height);
+      if (width > 0 && height > 0) setSize({ width, height });
+    };
+
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={frameRef} style={{ width: '100%', height: '100%', minWidth: 1, minHeight: 1 }}>
+      {size ? (
+        <ResponsiveContainer width={size.width} height={size.height}>
+          {children}
+        </ResponsiveContainer>
+      ) : null}
+    </div>
+  );
+}
+
 function Card({ title, subtitle, action, children, className = '' }: { title?: string; subtitle?: string; action?: ReactNode; children: ReactNode; className?: string }) {
   return (
     <section className={`panel ${className}`}>
@@ -517,7 +589,7 @@ function DashboardPage() {
       <div className="content-grid dashboard-grid">
         <Card title="نمو الطلبات والردود" subtitle="آخر 6 أشهر" className="span-2">
           <div className="chart-lg">
-            <ResponsiveContainer width="100%" height="100%">
+            <SafeResponsiveContainer>
               <LineChart data={marketTrend}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
                 <XAxis dataKey="month" reversed tickLine={false} axisLine={false} />
@@ -526,7 +598,7 @@ function DashboardPage() {
                 <Line type="monotone" dataKey="orders" name="الطلبات" stroke="#0d9488" strokeWidth={3} dot={{ r: 4 }} isAnimationActive={false} />
                 <Line type="monotone" dataKey="responses" name="الردود" stroke="#3b82f6" strokeWidth={2.5} strokeDasharray="6 5" dot={{ r: 3 }} isAnimationActive={false} />
               </LineChart>
-            </ResponsiveContainer>
+            </SafeResponsiveContainer>
           </div>
         </Card>
         <Card title="الحصص السوقية" subtitle="حسب المنصة">
@@ -534,7 +606,7 @@ function DashboardPage() {
         </Card>
         <Card title="أعلى المشاكل تأثيراً" subtitle="مؤشر الشدة والتكرار">
           <div className="chart-md">
-            <ResponsiveContainer width="100%" height="100%">
+            <SafeResponsiveContainer>
               <BarChart data={issues} layout="vertical" margin={{ right: 12, left: 12 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
                 <XAxis type="number" hide />
@@ -542,7 +614,7 @@ function DashboardPage() {
                 <Tooltip />
                 <Bar dataKey="severity" name="الشدة" fill="#0d9488" radius={[4, 4, 4, 4]} barSize={14} isAnimationActive={false} />
               </BarChart>
-            </ResponsiveContainer>
+            </SafeResponsiveContainer>
           </div>
         </Card>
         <Card title="أداء الوسطاء" subtitle="ترتيب تشغيلي مختصر" className="span-2">
@@ -558,14 +630,14 @@ function DonutChart() {
   return (
     <div className="donut-wrap">
       <div className="chart-sm">
-        <ResponsiveContainer width="100%" height="100%">
+        <SafeResponsiveContainer>
           <PieChart>
             <Pie data={marketShare} dataKey="value" nameKey="name" innerRadius={62} outerRadius={88} paddingAngle={3} isAnimationActive={false}>
               {marketShare.map((entry) => <Cell key={entry.name} fill={entry.color} />)}
             </Pie>
             <Tooltip />
           </PieChart>
-        </ResponsiveContainer>
+        </SafeResponsiveContainer>
       </div>
       <div className="legend-list">
         {marketShare.map((item) => (
@@ -600,7 +672,7 @@ function PlatformsPage() {
       <div className="content-grid two">
         <Card title="شارت حجم الطلب حسب المنصة" subtitle="حجم الطلب والإنفاق حسب المنصة">
           <div className="chart-lg">
-            <ResponsiveContainer width="100%" height="100%">
+            <SafeResponsiveContainer>
               <BarChart data={platformDemand}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
                 <XAxis dataKey="name" tickLine={false} axisLine={false} />
@@ -610,12 +682,12 @@ function PlatformsPage() {
                 <Bar yAxisId="orders" dataKey="orders" name="إجمالي الطلبات" fill="#0d9488" radius={[6, 6, 0, 0]} isAnimationActive={false} />
                 <Bar yAxisId="spend" dataKey="spend" name="إجمالي الإنفاق" fill="#3b82f6" radius={[6, 6, 0, 0]} isAnimationActive={false} />
               </BarChart>
-            </ResponsiveContainer>
+            </SafeResponsiveContainer>
           </div>
         </Card>
         <Card title="اتجاهات رضا العملاء" subtitle="متوسط التقييم آخر 6 أشهر">
           <div className="chart-lg">
-            <ResponsiveContainer width="100%" height="100%">
+            <SafeResponsiveContainer>
               <LineChart data={satisfactionTrend}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
                 <XAxis dataKey="month" reversed tickLine={false} axisLine={false} />
@@ -625,12 +697,12 @@ function PlatformsPage() {
                 <Line type="monotone" dataKey="noon" name="نون" stroke="#3b82f6" strokeWidth={2.5} dot={{ r: 3 }} isAnimationActive={false} />
                 <Line type="monotone" dataKey="amazon" name="أمازون" stroke="#f59e0b" strokeWidth={2.5} dot={{ r: 3 }} isAnimationActive={false} />
               </LineChart>
-            </ResponsiveContainer>
+            </SafeResponsiveContainer>
           </div>
         </Card>
         <Card title="المقارنة التشغيلية للمنصات" subtitle="طلب، رضا، توصيل">
           <div className="chart-lg">
-            <ResponsiveContainer width="100%" height="100%">
+            <SafeResponsiveContainer>
               <BarChart data={platformChart}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
                 <XAxis dataKey="name" tickLine={false} axisLine={false} />
@@ -640,12 +712,12 @@ function PlatformsPage() {
                 <Bar dataKey="satisfaction" name="الرضا" fill="#3b82f6" radius={[6, 6, 0, 0]} isAnimationActive={false} />
                 <Bar dataKey="delivery" name="التوصيل" fill="#f59e0b" radius={[6, 6, 0, 0]} isAnimationActive={false} />
               </BarChart>
-            </ResponsiveContainer>
+            </SafeResponsiveContainer>
           </div>
         </Card>
         <Card title="رادار الأداء المتكامل" subtitle="طلب، رضا، سرعة، دفع، تتبع">
           <div className="chart-lg">
-            <ResponsiveContainer width="100%" height="100%">
+            <SafeResponsiveContainer>
               <RadarChart data={[
                 { axis: 'الطلب', Shein: 92, Noon: 68, Amazon: 56 },
                 { axis: 'الرضا', Shein: 72, Noon: 64, Amazon: 78 },
@@ -660,7 +732,7 @@ function PlatformsPage() {
                 <Radar name="Amazon" dataKey="Amazon" stroke="#f59e0b" fill="#f59e0b" fillOpacity={0.12} isAnimationActive={false} />
                 <Tooltip />
               </RadarChart>
-            </ResponsiveContainer>
+            </SafeResponsiveContainer>
           </div>
         </Card>
       </div>
@@ -735,14 +807,14 @@ function BrokersPage() {
         </Card>
         <Card title="توزيع الجنس بين الوسطاء" subtitle="نسبة الذكور والإناث">
           <div className="chart-md">
-            <ResponsiveContainer width="100%" height="100%">
+            <SafeResponsiveContainer>
               <PieChart>
                 <Pie data={[{name:'إناث',value:55,color:'#ec4899'},{name:'ذكور',value:45,color:'#3b82f6'}]} dataKey="value" innerRadius={55} outerRadius={80} paddingAngle={4} isAnimationActive={false}>
                   {[{name:'إناث',color:'#ec4899'},{name:'ذكور',color:'#3b82f6'}].map(e=><Cell key={e.name} fill={e.color}/>)}
                 </Pie>
                 <Tooltip/>
               </PieChart>
-            </ResponsiveContainer>
+            </SafeResponsiveContainer>
           </div>
           <div className="legend-inline">
             <span><i style={{background:'#ec4899'}}/>إناث 55%</span>
@@ -754,7 +826,7 @@ function BrokersPage() {
       <div className="content-grid two">
         <Card title="حجم الطلبات حسب الوسيط" subtitle="آخر 30 يوم">
           <div className="chart-lg">
-            <ResponsiveContainer width="100%" height="100%">
+            <SafeResponsiveContainer>
               <BarChart data={brokers}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
                 <XAxis dataKey="name" tickLine={false} axisLine={false} />
@@ -762,7 +834,7 @@ function BrokersPage() {
                 <Tooltip />
                 <Bar dataKey="orders" name="الطلبات" fill="#0d9488" radius={[7, 7, 0, 0]} isAnimationActive={false} />
               </BarChart>
-            </ResponsiveContainer>
+            </SafeResponsiveContainer>
           </div>
         </Card>
         <Card title="مؤشرات الجودة" subtitle="نجاح، تقييم، متوسط التوصيل">
@@ -847,14 +919,14 @@ function ConsumerPage() {
       <div className="content-grid two">
         <Card title="توزيع الجنس" subtitle="عينة 500 مستجيب">
           <div className="chart-md">
-            <ResponsiveContainer width="100%" height="100%">
+            <SafeResponsiveContainer>
               <PieChart>
                 <Pie data={genderData} dataKey="value" innerRadius={70} outerRadius={98} paddingAngle={4} isAnimationActive={false}>
                   {genderData.map((entry) => <Cell key={entry.name} fill={entry.color} />)}
                 </Pie>
                 <Tooltip />
               </PieChart>
-            </ResponsiveContainer>
+            </SafeResponsiveContainer>
           </div>
           <div className="legend-inline">
             {genderData.map((item) => <span key={item.name}><i style={{ background: item.color }} />{item.name} {item.value}%</span>)}
@@ -869,7 +941,7 @@ function ConsumerPage() {
       <div className="content-grid two">
         <Card title="مخطط وتيرة الشراء" subtitle="تكرار الشراء حسب السلوك">
           <div className="chart-md">
-            <ResponsiveContainer width="100%" height="100%">
+            <SafeResponsiveContainer>
               <BarChart data={purchaseFrequency}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
                 <XAxis dataKey="label" tickLine={false} axisLine={false} />
@@ -877,12 +949,12 @@ function ConsumerPage() {
                 <Tooltip />
                 <Bar dataKey="value" name="النسبة" fill="#0d9488" radius={[6, 6, 0, 0]} barSize={34} isAnimationActive={false} />
               </BarChart>
-            </ResponsiveContainer>
+            </SafeResponsiveContainer>
           </div>
         </Card>
         <Card title="دوافع الشراء الرئيسية" subtitle="الأسباب الأكثر تأثيراً في قرار الشراء">
           <div className="chart-md">
-            <ResponsiveContainer width="100%" height="100%">
+            <SafeResponsiveContainer>
               <BarChart data={consumerDrivers} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
                 <XAxis type="number" hide />
@@ -890,7 +962,7 @@ function ConsumerPage() {
                 <Tooltip />
                 <Bar dataKey="value" fill="#3b82f6" radius={[4, 4, 4, 4]} barSize={18} isAnimationActive={false} />
               </BarChart>
-            </ResponsiveContainer>
+            </SafeResponsiveContainer>
           </div>
         </Card>
       </div>
@@ -945,7 +1017,7 @@ function GeoPage() {
       <div className="content-grid two">
         <Card title="الطلب حسب المدينة" subtitle="Demand index">
           <div className="chart-lg">
-            <ResponsiveContainer width="100%" height="100%">
+            <SafeResponsiveContainer>
               <BarChart data={cities}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
                 <XAxis dataKey="city" tickLine={false} axisLine={false} />
@@ -954,7 +1026,7 @@ function GeoPage() {
                 <Bar dataKey="demand" name="الطلب" fill="#0d9488" radius={[7, 7, 0, 0]} isAnimationActive={false} />
                 <Bar dataKey="response" name="الاستجابة" fill="#3b82f6" radius={[7, 7, 0, 0]} isAnimationActive={false} />
               </BarChart>
-            </ResponsiveContainer>
+            </SafeResponsiveContainer>
           </div>
         </Card>
         <Card title="خريطة تشغيلية مبسطة" subtitle="أولوية التدخل حسب المدينة">
@@ -992,7 +1064,7 @@ function IssuesPage() {
       <div className="content-grid two">
         <Card title="ترتيب المشاكل" subtitle="حسب مؤشر الشدة">
           <div className="chart-lg">
-            <ResponsiveContainer width="100%" height="100%">
+            <SafeResponsiveContainer>
               <BarChart data={issues} layout="vertical" margin={{ right: 12 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
                 <XAxis type="number" />
@@ -1001,7 +1073,7 @@ function IssuesPage() {
                 <Bar dataKey="severity" name="الشدة" fill="#ef4444" radius={[4, 4, 4, 4]} barSize={18} isAnimationActive={false} />
                 <Bar dataKey="frequency" name="التكرار" fill="#f59e0b" radius={[4, 4, 4, 4]} barSize={18} isAnimationActive={false} />
               </BarChart>
-            </ResponsiveContainer>
+            </SafeResponsiveContainer>
           </div>
         </Card>
         <Card title="مربعات التدخل" subtitle="أولوية حسب التأثير">
@@ -1043,7 +1115,7 @@ function OpportunitiesPage() {
       <div className="content-grid two">
         <Card title="مصفوفة الفرص" subtitle="الطلب × الألم × حجم السوق">
           <div className="chart-lg">
-            <ResponsiveContainer width="100%" height="100%">
+            <SafeResponsiveContainer>
               <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis type="number" dataKey="pain" name="الألم" domain={[0, 100]} />
@@ -1052,12 +1124,12 @@ function OpportunitiesPage() {
                 <Tooltip cursor={{ strokeDasharray: '3 3' }} />
                 <Scatter name="الفرص" data={opportunities} fill="#0d9488" fillOpacity={0.82} isAnimationActive={false} />
               </ScatterChart>
-            </ResponsiveContainer>
+            </SafeResponsiveContainer>
           </div>
         </Card>
         <Card title="توقع النمو" subtitle="12 شهر">
           <div className="chart-lg">
-            <ResponsiveContainer width="100%" height="100%">
+            <SafeResponsiveContainer>
               <AreaChart data={[
                 { q: 'Q1', fashion: 120, electronics: 82, logistics: 60 },
                 { q: 'Q2', fashion: 150, electronics: 105, logistics: 78 },
@@ -1072,7 +1144,7 @@ function OpportunitiesPage() {
                 <Area type="monotone" dataKey="electronics" name="الإلكترونيات" stackId="1" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.45} isAnimationActive={false} />
                 <Area type="monotone" dataKey="logistics" name="الخدمات اللوجستية" stackId="1" stroke="#0d9488" fill="#0d9488" fillOpacity={0.5} isAnimationActive={false} />
               </AreaChart>
-            </ResponsiveContainer>
+            </SafeResponsiveContainer>
           </div>
         </Card>
       </div>
@@ -1351,11 +1423,7 @@ function CampaignsPage() {
     setCustomers([]); // reset first
 
     try {
-      const buffer = await file.arrayBuffer();
-      const wb = XLSX.read(buffer, { type: 'array' });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      // Convert to array of arrays
-      const rows = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1, defval: '' }) as string[][];
+      const rows = await readCustomerFileRows(file);
 
       if (rows.length < 2) {
         alert('الملف فارغ أو لا يحتوي على بيانات');
@@ -1375,7 +1443,7 @@ function CampaignsPage() {
 
       const parsed = rows.slice(1)
         .map(row => ({
-          phone: String(row[pIdx] || '').replace(/\s+/g, '').replace(/[^\d+]/g, ''),
+          phone: normalizeCampaignPhone(row[pIdx]),
           name:  String(row[nIdx] || '').trim(),
           city:  String(row[cIdx] || '').trim(),
         }))
@@ -1399,22 +1467,21 @@ function CampaignsPage() {
     setProgress({ sent: 0, failed: 0, total: customers.length });
 
     try {
-      // Send via server — server handles whapi + conversation engine
-      const waba = { ...defaultWabaSettings, ...readStoredWabaSettings() };
       const resp = await fetch('/api/campaigns/launch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customers, campaignId: `campaign_${Date.now()}`, waba: { apiUrl: waba.apiUrl, apiKey: waba.apiKey } }),
+        body: JSON.stringify({ customers, campaignId: `campaign_${Date.now()}` }),
       });
-      const data = await resp.json() as { ok: boolean; queued?: number; message?: string };
+      const data = await resp.json() as { ok: boolean; queued?: number; message?: string; errors?: string[] };
 
       if (data.ok) {
         setProgress({ sent: data.queued || customers.length, failed: 0, total: customers.length });
         setToast({ message: `✅ تم إطلاق الحملة — ${data.queued || customers.length} عميل في قائمة الإرسال`, type: 'success' });
       } else {
-        setToast({ message: `❌ ${data.message || 'فشل إطلاق الحملة'}`, type: 'error' });
+        const errMsg = data.message || 'فشل إطلاق الحملة';
+        setToast({ message: `❌ ${errMsg}`, type: 'error' });
       }
-    } catch {
+    } catch (err) {
       setToast({ message: `❌ خطأ في الاتصال بالخادم`, type: 'error' });
     }
 
@@ -1458,9 +1525,9 @@ function CampaignsPage() {
         </Card>
         <Card title="أداء الحملة الزمنية" subtitle="توصيل مقابل استجابات">
           <div className="chart-md">
-            <ResponsiveContainer width="100%" height="100%">
+            <SafeResponsiveContainer>
               <BarChart data={campaignTrend}><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} /><XAxis dataKey="hour" /><YAxis /><Tooltip /><Bar dataKey="sent" name="توصيل الرسائل" fill="#cbd5e1" radius={[6,6,0,0]} isAnimationActive={false} /><Bar dataKey="replies" name="الاستجابات" fill="#0d9488" radius={[6,6,0,0]} isAnimationActive={false} /></BarChart>
-            </ResponsiveContainer>
+            </SafeResponsiveContainer>
           </div>
         </Card>
       </div>
@@ -1509,32 +1576,34 @@ function CampaignsPage() {
 
 function SettingsPage() {
   const [profile, setProfile] = useState({ name: 'أحمد محمد سالم', email: 'ahmed@linker-intelligence.com', org: 'لينكر ماركت للأبحاث', lang: 'العربية (Yemen)' });
-  const [waba, setWaba] = useState<WabaSettings>(() => ({ ...defaultWabaSettings, ...readStoredWabaSettings() }));
+  const [waba, setWaba] = useState({ provider: 'custom', apiUrl: 'https://gate.whapi.cloud/', apiKey: '', phoneId: '', businessId: '', webhookToken: '' });
   const [webhookUrl, setWebhookUrl] = useState('https://linker-agent.com/api/integrations/survey-agent/webhook');
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{message:string;type:'success'|'error'}|null>(null);
 
   const handleSaveAll = () => {
     setSaving(true);
-    // Save waba to localStorage so CampaignsPage can use it
-    try { localStorage.setItem('linker_waba_settings', JSON.stringify({ apiUrl: waba.apiUrl, apiKey: waba.apiKey })); } catch { /**/ }
     fetch('/api/admin/settings/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ profile, waba, webhookUrl }),
-    }).then(r => r.json()).then(() => {
+    }).then(async r => {
+      const data = await r.json().catch(() => ({} as Record<string, unknown>));
+      if (!r.ok || data?.ok === false) throw new Error((data?.message as string) || 'save failed');
+      return data;
+    }).then(() => {
       setSaving(false);
       setToast({ message: 'تم حفظ جميع الإعدادات بنجاح ✅', type: 'success' });
-    }).catch(() => {
+    }).catch((error) => {
       setSaving(false);
-      setToast({ message: 'فشل حفظ الإعدادات ❌', type: 'error' });
+      setToast({ message: `فشل حفظ الإعدادات: ${error instanceof Error ? error.message : 'خطأ غير معروف'}`, type: 'error' });
     });
   };
 
   const handleTestConnection = async () => {
     setToast({ message: 'جاري اختبار الاتصال بمزود WhatsApp API...', type: 'success' });
     try {
-      const r = await fetch('/api/test-connection', {
+      const r = await fetch('/api/admin/settings/test-whatsapp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider: waba.provider, apiUrl: waba.apiUrl, apiKey: waba.apiKey }),
@@ -1623,3 +1692,5 @@ function SettingsPage() {
 }
 
 export default App;
+
+

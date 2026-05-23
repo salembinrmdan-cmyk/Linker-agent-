@@ -28,14 +28,13 @@
     "lucide-react": "^1.16.0",
     "postcss": "^8.5.14",
     "prisma": "^6.0.0",
-    "railway": "^2.0.17",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-router-dom": "^7.15.1",
+    "read-excel-file": "^9.0.10",
     "recharts": "^3.8.1",
     "tailwind-merge": "^3.6.0",
-    "tailwindcss": "^4.3.0",
-    "xlsx": "^0.18.5"
+    "tailwindcss": "^4.3.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
