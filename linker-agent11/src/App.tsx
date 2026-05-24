@@ -543,6 +543,7 @@ function Topbar() {
       <div className="title-block">
         <span>لينكر / {current.label}</span>
         <h1>{current.label}</h1>
+        <span style={{color:'#0d9488',fontSize:11,fontWeight:700}}>نسخة التحقق من النشر &#8226; codex/h &#8226; 2026-05-24</span>
       </div>
       <FilterBar />
       <button className="icon-btn" aria-label="الإشعارات">
