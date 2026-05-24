@@ -1352,7 +1352,7 @@ function SettingsPage() {
     setToast({ message: response.ok ? 'تم حفظ الإعدادات' : 'فشل حفظ الإعدادات', type: response.ok ? 'success' : 'error' });
   };
   const test = async () => {
-    const response = await fetch('/api/admin/settings/test-whatsapp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: waba.provider, apiUrl: waba.apiUrl, apiKey: waba.apiKey }) });
+    const response = await fetch('/api/test-connection', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: waba.provider, apiUrl: waba.apiUrl, apiKey: waba.apiKey }) });
     const data = await response.json().catch(() => ({ message: 'تعذر قراءة الرد' })) as { message?: string };
     setToast({ message: data.message || (response.ok ? 'تم الاتصال' : 'فشل الاتصال'), type: response.ok ? 'success' : 'error' });
   };
