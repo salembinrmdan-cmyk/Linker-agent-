@@ -118,34 +118,42 @@ export default async function handler(req: any, res: any) {
     const w = body.waba || {};
     const token = stringField(w.apiKey) || whapiToken;
     const baseUrl = (stringField(w.apiUrl) || whapiUrl).replace(/\/$/, '');
-    console.log(`[campaign] token=${token ? 'set' : 'missing'} customers=${customers.length} url=${baseUrl}`);
+    console.log(`[campaign] token=${token.slice(0,8)}... customers=${customers.length} url=${baseUrl}`);
 
     if (customers.length === 0) return ok(res, { ok: true, queued: 0, message: 'لا يوجد مستلمون — تأكد من رفع ملف العملاء' });
 
     await ensureWebhook(webhookUrl || `https://${req.headers.host}/api/integrations/survey-agent/webhook`);
 
     let queued = 0;
-    for (const c of customers) {
-      const phone = String(c.phone || '').replace(/\D/g, '');
+    let errors: string[] = [];
+    for (const c of customers.slice(0, 50)) {
+      let phone = String(c.phone || '').replace(/\D/g, '');
       if (phone.length < 9) continue;
+      if (!phone.startsWith('967') && phone.length <= 10) phone = '967' + phone;
       const text = greet();
-      const ir = await fetch(`${baseUrl}/messages/interactive`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: phone, type: 'button',
-          body: { text },
-          action: { buttons: [
-            { type: 'quick_reply', id: 'survey_start_yes', title: 'نعم، أبدأ' },
-            { type: 'quick_reply', id: 'survey_start_later', title: 'لاحقاً' },
-          ]},
-        }),
-      });
-      if (ir.ok) queued++;
-      else console.error(`[campaign] send to ${phone} failed: ${ir.status}`);
+      try {
+        const ir = await fetch(`${baseUrl}/messages/interactive`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: phone, type: 'button',
+            body: { text },
+            action: { buttons: [
+              { type: 'reply', reply: { id: 'survey_start_yes', title: 'نعم، أبدأ' } },
+              { type: 'reply', reply: { id: 'survey_start_later', title: 'لاحقاً' } },
+            ]},
+          }),
+        });
+        const rb = await ir.text();
+        if (ir.ok) { queued++; }
+        else { errors.push(`${phone}: ${ir.status} ${rb.slice(0,80)}`); console.error(`[campaign] ${phone}: ${ir.status} ${rb.slice(0,100)}`); }
+      } catch (e) {
+        errors.push(`${phone}: ${e}`);
+        console.error(`[campaign] ${phone} error:`, e);
+      }
       await new Promise(r => setTimeout(r, 2000));
     }
-    return ok(res, { ok: true, queued });
+    return ok(res, { ok: true, queued, errors: errors.length ? errors.slice(0, 5) : undefined });
   }
 
   // ── Webhook ────────────────────────────────────────────────────────────
