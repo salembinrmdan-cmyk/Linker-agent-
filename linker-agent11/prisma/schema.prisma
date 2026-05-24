@@ -9,13 +9,45 @@ datasource db {
 }
 
 model SurveyCampaign {
+  id                      String   @id @default(cuid())
+  name                    String
+  description             String?
+  type                    String   @default("survey")
+  surveyTemplate          String?
+  launchMode              String   @default("draft")
+  status                  String   @default("draft")
+  scheduledAt             DateTime?
+  startedAt               DateTime?
+  completedAt             DateTime?
+  recipientCount          Int      @default(0)
+  validRecipientCount     Int      @default(0)
+  duplicateRecipientCount Int      @default(0)
+  invalidRecipientCount   Int      @default(0)
+  humanMode               Boolean  @default(false)
+  settings                Json     @default("{}")
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  recipients              CampaignRecipient[]
+  responses               SurveyResponse[]
+}
+
+model CampaignRecipient {
   id          String   @id @default(cuid())
-  name        String
-  description String?
-  status      String   @default("draft")
+  campaignId  String
+  campaign    SurveyCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  phone       String
+  name        String?
+  city        String?
+  status      String   @default("pending")
+  error       String?
+  sentAt      DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  responses   SurveyResponse[]
+
+  @@unique([campaignId, phone])
+  @@index([campaignId])
+  @@index([phone])
+  @@index([status])
 }
 
 model SurveyCustomer {

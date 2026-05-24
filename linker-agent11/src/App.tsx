@@ -1,6 +1,6 @@
-﻿import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { readSheet } from 'read-excel-file/browser';
-import { useEffect, useRef, useState, createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -9,38 +9,36 @@ import {
   Bot,
   CalendarDays,
   CheckCircle2,
-  ChevronDown,
   ClipboardList,
   Database,
   Download,
+  Eye,
   Filter,
   Globe2,
+  GripVertical,
   Handshake,
   LayoutDashboard,
-  Lightbulb,
+  ListChecks,
   MapPinned,
   Megaphone,
   MessageSquare,
   PackageCheck,
+  PlayCircle,
+  Plus,
+  Save,
   Search,
   Send,
   Settings,
   ShieldCheck,
-  ShoppingBag,
-  Star,
-  Target,
-  Timer,
-  TrendingUp,
-  Truck,
+  Trash2,
+  Type,
   UploadCloud,
   Users,
   WalletCards,
-  Zap,
+  X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import {
-  Area,
-  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
@@ -49,202 +47,144 @@ import {
   LineChart,
   Pie,
   PieChart,
-  PolarAngleAxis,
-  PolarGrid,
-  Radar,
-  RadarChart,
   ResponsiveContainer,
-  Scatter,
-  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
-  ZAxis,
 } from 'recharts';
 
 type Tone = 'teal' | 'blue' | 'amber' | 'green' | 'red' | 'purple' | 'pink';
+type ToastState = { message: string; type: 'success' | 'error' } | null;
+type FilterState = { period: string; city: string; platform: string };
+type CountDatum = { name: string; value: number; color?: string };
+type QuestionType =
+  | 'single_select'
+  | 'multi_select'
+  | 'open_text'
+  | 'quick_buttons'
+  | 'interactive_list'
+  | 'text_input'
+  | 'rating'
+  | 'yes_no';
 
-type MetricCardProps = {
-  icon: LucideIcon;
+type SurveyQuestion = {
+  id: string;
   label: string;
-  value: string;
-  hint: string;
-  delta?: string;
-  tone?: Tone;
+  text: string;
+  options: string[];
+  key: string;
+  type: QuestionType;
 };
 
-const chartColors = ['#0d9488', '#3b82f6', '#f59e0b', '#64748b', '#ec4899', '#8b5cf6'];
+type ApiCustomer = { id?: string; phone: string; name?: string | null; city?: string | null };
+type ApiCampaign = {
+  id: string;
+  name: string;
+  description?: string | null;
+  type?: string | null;
+  surveyTemplate?: string | null;
+  launchMode?: string | null;
+  status: string;
+  scheduledAt?: string | null;
+  recipientCount?: number;
+  validRecipientCount?: number;
+  duplicateRecipientCount?: number;
+  invalidRecipientCount?: number;
+  humanMode?: boolean;
+  sentCount?: number;
+  responseCount?: number;
+  responseRate?: number;
+  createdAt?: string;
+  updatedAt?: string;
+};
+type ApiSurveyResponse = {
+  id: string;
+  campaignId: string;
+  customerId: string;
+  platforms?: string | null;
+  preferredPlatform?: string | null;
+  purchaseMethod?: string | null;
+  brokerName?: string | null;
+  brokerPlatform?: string | null;
+  mainProblem?: string | null;
+  purchaseFrequency?: string | null;
+  city?: string | null;
+  ageGroup?: string | null;
+  gender?: string | null;
+  paymentPreference?: string | null;
+  directPurchaseProb?: string | null;
+  directEncouragement?: string | null;
+  rawChatLog?: string | null;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  customer?: ApiCustomer;
+  campaign?: { id: string; name: string; status: string };
+};
+type DashboardMetrics = {
+  totalResponses: number;
+  brokerDependencyRatio: number;
+  directProbabilityRatio: number;
+  topBrokers: { name?: string; type?: string | null; channel?: string | null; mentionCount?: number }[];
+  allBrokers: { name?: string; type?: string | null; channel?: string | null; gender?: string | null; mentionCount?: number }[];
+  recentResponses: ApiSurveyResponse[];
+  platformBreakdown: CountDatum[];
+  cityBreakdown: CountDatum[];
+  problemBreakdown: CountDatum[];
+  paymentPreferenceBreakdown: CountDatum[];
+  purchaseMethodBreakdown: CountDatum[];
+  ageGroupBreakdown: CountDatum[];
+  genderBreakdown: CountDatum[];
+  frequencyBreakdown: CountDatum[];
+  directEncouragementBreakdown: CountDatum[];
+  brokerTypeBreakdown: CountDatum[];
+  brokerChannelBreakdown: CountDatum[];
+  brokerGenderBreakdown: CountDatum[];
+  campaignStats?: { totalCampaigns: number; activeCampaigns: number; scheduledCampaigns: number };
+  messageStats?: { sentMessages: number; failedMessages: number; inboundMessages: number; deliveryRatio: number; replyRatio: number };
+};
+type MarketDataValue = {
+  dashboard: DashboardMetrics;
+  responses: ApiSurveyResponse[];
+  campaigns: ApiCampaign[];
+  loading: boolean;
+  error: string | null;
+  refresh: () => Promise<void>;
+};
+type RecipientRecord = { phone: string; name?: string; city?: string };
+type RecipientPreview = {
+  totalRows: number;
+  validCount: number;
+  duplicateCount: number;
+  invalidCount: number;
+  recipients: RecipientRecord[];
+  duplicates: { row: number; phone: string; firstRow: number }[];
+  invalid: { row: number; rawPhone: string; reason: string }[];
+};
 
-type FilterState = { period: string; city: string; platform: string };
-const FilterContext = createContext<{ filters: FilterState; setFilters: (f: Partial<FilterState>) => void }>({ filters: { period: 'آخر 30 يوم', city: 'كل المدن', platform: 'كل المنصات' }, setFilters: () => {} });
-function useFilters() { return useContext(FilterContext); }
-
-function FilterBar() {
-  const { filters, setFilters } = useFilters();
-  const periods = ['آخر 24 ساعة', 'آخر 7 أيام', 'آخر 30 يوم', 'الربع الحالي', 'سنة كاملة'];
-  const cities = ['كل المدن', 'صنعاء', 'عدن', 'تعز', 'حضرموت', 'الحديدة'];
-  const platforms = ['كل المنصات', 'شي إن', 'نون', 'أمازون', 'علي إكسبريس'];
-
-  return (
-    <div className="topbar-tools">
-      <div className="search-box">
-        <Search size={18} />
-        <input aria-label="بحث" placeholder="بحث في المؤشرات والردود..." />
-      </div>
-      <div className="filter-row" style={{ gap: 6 }}>
-        <FilterChip icon={CalendarDays} label={filters.period} active />
-        <select value={filters.period} onChange={e => setFilters({ period: e.target.value })} style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 13, background: '#f8fafc' }}>
-          {periods.map(p => <option key={p}>{p}</option>)}
-        </select>
-        <FilterChip icon={MapPinned} label={filters.city} active />
-        <select value={filters.city} onChange={e => setFilters({ city: e.target.value })} style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 13, background: '#f8fafc' }}>
-          {cities.map(c => <option key={c}>{c}</option>)}
-        </select>
-        <FilterChip icon={Globe2} label={filters.platform} active />
-        <select value={filters.platform} onChange={e => setFilters({ platform: e.target.value })} style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 13, background: '#f8fafc' }}>
-          {platforms.map(p => <option key={p}>{p}</option>)}
-        </select>
-        <button className="btn secondary" onClick={() => setFilters({ period: 'آخر 30 يوم', city: 'كل المدن', platform: 'كل المنصات' })} style={{ fontSize: 12, padding: '6px 12px' }}>
-          <Filter size={14} /> إعادة ضبط
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function FilterChip({ icon: Icon, label, active }: { icon: LucideIcon; label: string; active?: boolean }) {
-  return (
-    <div className="filter-chip" style={active ? { background: '#f0fdfa', borderColor: '#0d9488', color: '#0d9488', display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 13 } : { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 13 }}>
-      <Icon size={16} />
-      <span>{label}</span>
-      <ChevronDown size={14} />
-    </div>
-  );
-}
-
-const marketTrend = [
-  { month: 'يناير', orders: 420, responses: 210, satisfaction: 3.8 },
-  { month: 'فبراير', orders: 510, responses: 260, satisfaction: 4.0 },
-  { month: 'مارس', orders: 690, responses: 390, satisfaction: 4.1 },
-  { month: 'أبريل', orders: 640, responses: 430, satisfaction: 4.0 },
-  { month: 'مايو', orders: 860, responses: 590, satisfaction: 4.3 },
-  { month: 'يونيو', orders: 980, responses: 710, satisfaction: 4.4 },
-];
-
-const marketShare = [
-  { name: 'شي إن', value: 42, color: '#0d9488' },
-  { name: 'نون', value: 21, color: '#3b82f6' },
-  { name: 'أمازون', value: 17, color: '#f59e0b' },
-  { name: 'علي إكسبريس', value: 14, color: '#64748b' },
-  { name: 'أخرى', value: 6, color: '#ec4899' },
-];
-
-const platformRows = [
-  { platform: 'Shein', arabic: 'شي إن', share: '42%', orders: '52,400', nps: 72, delivery: '12.8 يوم', issue: 'تأخير في تسليم الشحنة', status: 'متصدر' },
-  { platform: 'Noon', arabic: 'نون', share: '21%', orders: '26,100', nps: 64, delivery: '9.4 يوم', issue: 'محدودية طرق الدفع', status: 'مستقر' },
-  { platform: 'Amazon', arabic: 'أمازون', share: '17%', orders: '18,900', nps: 78, delivery: '14.1 يوم', issue: 'ارتفاع رسوم الشحن', status: 'نامي' },
-  { platform: 'AliExpress', arabic: 'علي إكسبريس', share: '14%', orders: '15,700', nps: 58, delivery: '21.6 يوم', issue: 'الجمارك والتتبع', status: 'بحاجة تدخل' },
-];
-
-const platformChart = [
-  { name: 'شي إن', demand: 92, satisfaction: 72, delivery: 64 },
-  { name: 'نون', demand: 68, satisfaction: 64, delivery: 81 },
-  { name: 'أمازون', demand: 56, satisfaction: 78, delivery: 58 },
-  { name: 'علي إكسبريس', demand: 48, satisfaction: 58, delivery: 42 },
-];
-
-const platformDemand = [
-  { name: 'شي إن', orders: 52400, spend: 1240000 },
-  { name: 'نون', orders: 26100, spend: 680000 },
-  { name: 'أمازون', orders: 18900, spend: 515000 },
-  { name: 'علي إكسبريس', orders: 15700, spend: 420000 },
-  { name: 'أخرى', orders: 7400, spend: 165000 },
-];
-
-const satisfactionTrend = [
-  { month: 'يناير', shein: 4.0, noon: 3.8, amazon: 4.2 },
-  { month: 'فبراير', shein: 4.1, noon: 3.9, amazon: 4.3 },
-  { month: 'مارس', shein: 4.2, noon: 4.1, amazon: 4.4 },
-  { month: 'أبريل', shein: 4.0, noon: 4.0, amazon: 4.2 },
-  { month: 'مايو', shein: 4.3, noon: 4.2, amazon: 4.6 },
-  { month: 'يونيو', shein: 4.4, noon: 4.3, amazon: 4.7 },
-];
-
-const brokers = [
-  { name: 'سما إكسبريس', city: 'صنعاء / عدن', orders: 3420, success: 91, rating: 4.8, avg: '11.2 يوم', status: 'نشط جداً' },
-  { name: 'محيط للتوصيل', city: 'تعز / إب', orders: 2850, success: 84, rating: 4.5, avg: '13.5 يوم', status: 'نشط' },
-  { name: 'أمانة لوجستك', city: 'الحديدة / المكلا', orders: 1210, success: 73, rating: 4.2, avg: '16.4 يوم', status: 'مستقر' },
-  { name: 'بوابة اليمن', city: 'حضرموت', orders: 980, success: 68, rating: 3.9, avg: '18.7 يوم', status: 'مراقبة' },
-];
-
-const issues = [
-  { type: 'تأخير الشحن', severity: 88, frequency: 64, owner: 'العمليات', trend: '+14%' },
-  { type: 'رسوم جمركية غير متوقعة', severity: 82, frequency: 51, owner: 'الشركاء', trend: '+9%' },
-  { type: 'ضعف التتبع', severity: 74, frequency: 46, owner: 'التكامل', trend: '+6%' },
-  { type: 'صعوبة الدفع', severity: 67, frequency: 39, owner: 'المنتج', trend: '-3%' },
-  { type: 'تلف أو فقدان الشحنة', severity: 63, frequency: 28, owner: 'الجودة', trend: '+2%' },
-];
-
-const cities = [
-  { city: 'صنعاء', demand: 92, response: 78, delivery: 12.4, share: '34%' },
-  { city: 'عدن', demand: 86, response: 71, delivery: 10.8, share: '24%' },
-  { city: 'تعز', demand: 74, response: 63, delivery: 15.6, share: '17%' },
-  { city: 'حضرموت', demand: 69, response: 58, delivery: 17.2, share: '14%' },
-  { city: 'الحديدة', demand: 55, response: 49, delivery: 18.1, share: '11%' },
-];
-
-const consumerDrivers = [
-  { name: 'السعر المنخفض', value: 78 },
-  { name: 'تنوع المنتجات', value: 62 },
-  { name: 'سهولة الدفع', value: 55 },
-  { name: 'العروض والخصومات', value: 47 },
-  { name: 'ثقة الوسيط', value: 41 },
-];
-
-const ageGroups = [
-  { name: '18-24', value: 25 },
-  { name: '25-34', value: 40 },
-  { name: '35-44', value: 20 },
-  { name: '45+', value: 15 },
-];
-
-const purchaseFrequency = [
-  { label: 'أسبوعياً', value: 15 },
-  { label: 'شهرياً', value: 55 },
-  { label: 'ربع سنوي', value: 30 },
-  { label: 'حسب العروض', value: 42 },
-];
-
-const consumerSegments = [
-  { segment: 'المتسوقون بكثافة (Heavy Shoppers)', users: '12,450', spend: '$185.00', platforms: 'شي إن، أمازون', status: 'نشط جداً' },
-  { segment: 'المشترون العرضيون (Occasional)', users: '45,200', spend: '$32.50', platforms: 'علي إكسبريس، السوق المفتوح', status: 'مستقر' },
-];
-
-const opportunities = [
-  { name: 'الدفع عند الاستلام', demand: 94, pain: 38, size: 900 },
-  { name: 'تتبع مباشر', demand: 82, pain: 74, size: 700 },
-  { name: 'تسليم منزلي', demand: 88, pain: 68, size: 820 },
-  { name: 'ضمان الاسترجاع', demand: 79, pain: 81, size: 620 },
-  { name: 'تجميع الشحنات', demand: 72, pain: 55, size: 520 },
-];
-
-const responses: {name:string;phone:string;city:string;platform:string;issue:string;rating:number;date:string;status:string}[] = [];
-
-const campaigns = [
-  { name: 'مسح القوة الشرائية - إب', sent: '5,000', responses: '3,640', rate: '72.8%', status: 'نشط', spend: '$420' },
-  { name: 'تفضيلات العلامات التجارية - حضرموت', sent: '8,200', responses: '2,140', rate: '26.1%', status: 'مجدول', spend: '$310' },
-  { name: 'توعية صحية - الحديدة', sent: '12,000', responses: '5,400', rate: '45.0%', status: 'نشط', spend: '$680' },
-];
-
-const campaignTrend = [
-  { hour: '08:00', sent: 1200, replies: 390 },
-  { hour: '10:00', sent: 1800, replies: 620 },
-  { hour: '12:00', sent: 900, replies: 240 },
-  { hour: '14:00', sent: 1400, replies: 510 },
-  { hour: '16:00', sent: 2200, replies: 990 },
-  { hour: '18:00', sent: 1900, replies: 850 },
-  { hour: '20:00', sent: 2600, replies: 1370 },
-];
+const chartColors = ['#0d9488', '#3b82f6', '#f59e0b', '#64748b', '#ec4899', '#8b5cf6', '#22c55e'];
+const emptyDashboard: DashboardMetrics = {
+  totalResponses: 0,
+  brokerDependencyRatio: 0,
+  directProbabilityRatio: 0,
+  topBrokers: [],
+  allBrokers: [],
+  recentResponses: [],
+  platformBreakdown: [],
+  cityBreakdown: [],
+  problemBreakdown: [],
+  paymentPreferenceBreakdown: [],
+  purchaseMethodBreakdown: [],
+  ageGroupBreakdown: [],
+  genderBreakdown: [],
+  frequencyBreakdown: [],
+  directEncouragementBreakdown: [],
+  brokerTypeBreakdown: [],
+  brokerChannelBreakdown: [],
+  brokerGenderBreakdown: [],
+  campaignStats: { totalCampaigns: 0, activeCampaigns: 0, scheduledCampaigns: 0 },
+  messageStats: { sentMessages: 0, failedMessages: 0, inboundMessages: 0, deliveryRatio: 0, replyRatio: 0 },
+};
 
 const navSections = [
   {
@@ -252,15 +192,15 @@ const navSections = [
     items: [
       { path: '/', label: 'لوحة القيادة', icon: LayoutDashboard },
       { path: '/platforms', label: 'تحليل المنصات', icon: Globe2 },
-      { path: '/brokers', label: 'قنوات الشراء غير المباشر', icon: Handshake },
+      { path: '/brokers', label: 'قنوات الشراء', icon: Handshake },
       { path: '/consumer', label: 'سلوك المستهلك', icon: Users },
       { path: '/geo', label: 'التوزيع الجغرافي', icon: MapPinned },
       { path: '/issues', label: 'مصفوفة المشاكل', icon: AlertTriangle },
-      { path: '/opportunities', label: 'الفرص والتوقعات', icon: Lightbulb },
+      { path: '/opportunities', label: 'الفرص والتوقعات', icon: PackageCheck },
     ],
   },
   {
-    label: 'الأدوات',
+    label: 'التشغيل',
     items: [
       { path: '/responses', label: 'نتائج الاستبيانات', icon: ClipboardList },
       { path: '/survey-engine', label: 'محرك الاستبيان', icon: Bot },
@@ -270,36 +210,147 @@ const navSections = [
   },
 ];
 
-const pageTitles = navSections.flatMap((section) => section.items);
+const questionTypes: { value: QuestionType; label: string; hint: string }[] = [
+  { value: 'single_select', label: 'اختيار واحد', hint: 'إجابة واحدة من الخيارات' },
+  { value: 'multi_select', label: 'اختيارات متعددة', hint: 'عدة إجابات في نفس السؤال' },
+  { value: 'open_text', label: 'سؤال مفتوح', hint: 'إجابة حرة طويلة أو قصيرة' },
+  { value: 'quick_buttons', label: 'أزرار سريعة', hint: 'حتى ثلاثة خيارات مباشرة' },
+  { value: 'interactive_list', label: 'قائمة تفاعلية', hint: 'قائمة WhatsApp منظمة' },
+  { value: 'text_input', label: 'إدخال نص', hint: 'حقل نص مباشر' },
+  { value: 'rating', label: 'تقييم', hint: 'درجة أو تقييم رقمي' },
+  { value: 'yes_no', label: 'نعم/لا', hint: 'سؤال ثنائي مختصر' },
+];
 
-function formatNumber(value: number) {
-  return new Intl.NumberFormat('en-US').format(value);
+const defaultQuestions: SurveyQuestion[] = [
+  { id: 'GREETING', label: 'الرسالة الافتتاحية', text: 'السلام عليكم\nمعك فريق دراسة تجربة التسوق والتوصيل في اليمن.\nالاستبيان خفيف وما يأخذ أكثر من دقيقتين.\nهل ممكن نبدأ؟', options: [], key: '', type: 'open_text' },
+  { id: 'ASK_PLATFORMS', label: 'المنصات المستخدمة', text: 'من أي المنصات أو التطبيقات تشتري غالباً؟', options: ['شي إن', 'نون', 'أمازون', 'علي إكسبريس', 'تيمو', 'آي هيرب', 'نايس ون', 'متاجر إنستغرام', 'مواقع أو تطبيقات أخرى'], key: 'platforms', type: 'multi_select' },
+  { id: 'ASK_FAVORITE_PLATFORM', label: 'المنصة المفضلة', text: 'وأي منصة تعتبرها الأكثر استخداماً بالنسبة لك؟', options: [], key: 'preferredPlatform', type: 'text_input' },
+  { id: 'ASK_PURCHASE_METHOD', label: 'طريقة الشراء', text: 'كيف تقوم بالشراء غالباً؟', options: ['أطلب بنفسي مباشرة من الموقع', 'أطلب عبر وسيط أو مندوب', 'أحياناً مباشرة وأحياناً عبر وسيط', 'أشتري من متجر محلي يعرض المنتجات'], key: 'purchaseMethod', type: 'interactive_list' },
+  { id: 'ASK_BROKER_SOURCE', label: 'مصدر الوسيط', text: 'غالباً كيف تعرفت على الوسيط؟', options: ['إنستغرام', 'واتساب', 'تيك توك', 'تيليجرام', 'صديق أو معرفة', 'متجر محلي', 'إعلان'], key: 'brokerSource', type: 'interactive_list' },
+  { id: 'ASK_BROKER_NAME', label: 'اسم الوسيط', text: 'ايش اسم الحساب أو الوسيط اللي تتعامل معه غالباً؟', options: [], key: 'brokerName', type: 'text_input' },
+  { id: 'ASK_DELIVERY_TIME', label: 'وقت التوصيل', text: 'كم تستغرق الطلبية حتى توصل لك؟', options: ['أقل من أسبوعين', 'أسبوعين إلى شهر', 'أكثر من شهر', 'تختلف حسب الطلب'], key: 'deliveryTime', type: 'interactive_list' },
+  { id: 'ASK_HAS_COD', label: 'الدفع عند الاستلام', text: 'هل يتوفر الدفع عند الاستلام؟', options: ['نعم', 'لا', 'أحياناً'], key: 'cashOnDelivery', type: 'quick_buttons' },
+  { id: 'ASK_HAS_PROBLEMS', label: 'وجود مشاكل', text: 'هل قد واجهت مشكلة مع الطلبات؟', options: ['نعم', 'لا'], key: 'hasProblems', type: 'yes_no' },
+  { id: 'ASK_MAIN_PROBLEM', label: 'المشكلة الرئيسية', text: 'ايش أكثر مشكلة واجهتك؟', options: ['تأخير الطلب', 'ارتفاع الشحن', 'المنتج مختلف', 'ضعف التتبع', 'صعوبة التواصل', 'مشكلة في المقاس', 'مشكلة بالدفع', 'مشكلة بالاستلام', 'أخرى'], key: 'mainProblem', type: 'interactive_list' },
+  { id: 'ASK_CITY', label: 'المدينة', text: 'أي مدينة أنت؟', options: [], key: 'city', type: 'text_input' },
+  { id: 'ASK_PAYMENT_METHOD', label: 'طريقة الدفع', text: 'ايش طريقة الدفع اللي تفضلها غالباً؟', options: ['الدفع عند الاستلام', 'تحويل', 'محفظة إلكترونية', 'بطاقة بنكية'], key: 'paymentPreference', type: 'interactive_list' },
+  { id: 'ASK_DIRECT_PROBABILITY', label: 'احتمالية الشراء المباشر', text: 'إذا توفر طلب مباشر مع دفع عند الاستلام وتتبع واضح وتوصيل محلي، هل تتوقع تطلب مباشرة؟', options: ['أكيد', 'غالباً', 'ممكن', 'لا'], key: 'directPurchaseProb', type: 'quick_buttons' },
+  { id: 'ASK_DIRECT_ENCOURAGEMENT', label: 'ما يشجع للشراء المباشر', text: 'ايش أكثر شيء يشجعك تطلب مباشرة؟', options: ['الدفع عند الاستلام', 'سرعة التوصيل', 'تتبع واضح', 'أسعار أفضل', 'ضمان واسترجاع', 'ثقة أكبر'], key: 'directEncouragement', type: 'multi_select' },
+  { id: 'COMPLETED', label: 'الرسالة الختامية', text: 'شكراً لك جداً.\nمشاركتك أفادتنا بشكل كبير في تحسين خدمات التسوق والتوصيل داخل اليمن.', options: [], key: '', type: 'open_text' },
+];
+
+const pageTitles = navSections.flatMap((section) => section.items);
+const FilterContext = createContext<{ filters: FilterState; setFilters: (f: Partial<FilterState>) => void }>({
+  filters: { period: 'آخر 30 يوم', city: 'كل المدن', platform: 'كل المنصات' },
+  setFilters: () => undefined,
+});
+const MarketDataContext = createContext<MarketDataValue>({
+  dashboard: emptyDashboard,
+  responses: [],
+  campaigns: [],
+  loading: true,
+  error: null,
+  refresh: async () => undefined,
+});
+
+function useFilters() {
+  return useContext(FilterContext);
 }
 
-function downloadCSV(filename: string, headers: string[], rows: string[][]) {
-  let csv = '\uFEFF' + headers.join(',') + '\n';
-  rows.forEach(row => {
-    csv += row.map(f => `"${String(f).replace(/"/g, '""')}"`).join(',') + '\n';
-  });
+function useMarketData() {
+  return useContext(MarketDataContext);
+}
+
+async function fetchJson<T>(url: string): Promise<T> {
+  const response = await fetch(url);
+  const text = await response.text();
+  const data = text ? JSON.parse(text) as T : ({} as T);
+  if (!response.ok) {
+    const message = typeof data === 'object' && data && 'message' in data ? String((data as { message?: unknown }).message) : `HTTP ${response.status}`;
+    throw new Error(message);
+  }
+  return data;
+}
+
+function MarketDataProvider({ children }: { children: ReactNode }) {
+  const [dashboard, setDashboard] = useState<DashboardMetrics>(emptyDashboard);
+  const [responses, setResponses] = useState<ApiSurveyResponse[]>([]);
+  const [campaigns, setCampaigns] = useState<ApiCampaign[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = async () => {
+    try {
+      setError(null);
+      const [dashboardResult, responseResult, campaignResult] = await Promise.allSettled([
+        fetchJson<DashboardMetrics>('/api/admin/market-intelligence/dashboard'),
+        fetchJson<ApiSurveyResponse[]>('/api/admin/market-intelligence/responses'),
+        fetchJson<{ ok: boolean; campaigns: ApiCampaign[] }>('/api/admin/campaigns'),
+      ]);
+
+      setDashboard(dashboardResult.status === 'fulfilled' ? { ...emptyDashboard, ...dashboardResult.value } : emptyDashboard);
+      setResponses(responseResult.status === 'fulfilled' && Array.isArray(responseResult.value) ? responseResult.value : []);
+      setCampaigns(campaignResult.status === 'fulfilled' && Array.isArray(campaignResult.value.campaigns) ? campaignResult.value.campaigns : []);
+
+      const errors = [dashboardResult, responseResult, campaignResult]
+        .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+        .map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason));
+      if (errors.length) setError(Array.from(new Set(errors)).join(' / '));
+    } catch (err) {
+      setDashboard(emptyDashboard);
+      setResponses([]);
+      setCampaigns([]);
+      setError(err instanceof Error ? err.message : 'تعذر تحميل البيانات');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 15000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const value = useMemo(() => ({ dashboard, responses, campaigns, loading, error, refresh }), [dashboard, responses, campaigns, loading, error]);
+  return <MarketDataContext.Provider value={value}>{children}</MarketDataContext.Provider>;
+}
+
+function formatNumber(value: number | undefined | null) {
+  return new Intl.NumberFormat('en-US').format(value || 0);
+}
+
+function percent(value: number | undefined | null) {
+  return `${Math.round(value || 0)}%`;
+}
+
+function valueShare(value: number, total: number) {
+  return total > 0 ? Math.round((value / total) * 100) : 0;
+}
+
+function withColors(data: CountDatum[]) {
+  return data.map((item, index) => ({ ...item, color: item.color || chartColors[index % chartColors.length] }));
+}
+
+function firstName(data: CountDatum[], fallback = 'لا توجد بيانات') {
+  return data[0]?.name || fallback;
+}
+
+function downloadCSV(filename: string, headers: string[], rows: Array<Array<string | number | null | undefined>>) {
+  const csv = '\uFEFF' + [
+    headers.join(','),
+    ...rows.map((row) => row.map((field) => `"${String(field ?? '').replace(/"/g, '""')}"`).join(',')),
+  ].join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(a.href);
+  const anchor = document.createElement('a');
+  anchor.href = URL.createObjectURL(blob);
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(anchor.href);
 }
 
 function downloadCampaignTemplate() {
-  downloadCSV(
-    'linker_campaign_template.csv',
-    ['رقم الهاتف', 'الاسم', 'المدينة'],
-    [
-
-      ['967710987654', 'خالد جمال', 'تعز'],
-      ['', '', ''],
-      ['', '', ''],
-    ],
-  );
+  downloadCSV('linker_campaign_template.csv', ['رقم الهاتف', 'الاسم', 'المدينة'], []);
 }
 
 function parseCsvRows(text: string): string[][] {
@@ -309,13 +360,12 @@ function parseCsvRows(text: string): string[][] {
   let quoted = false;
   const input = text.replace(/^\uFEFF/, '');
 
-  for (let i = 0; i < input.length; i += 1) {
-    const char = input[i];
-    const next = input[i + 1];
-
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    const next = input[index + 1];
     if (char === '"' && quoted && next === '"') {
       field += '"';
-      i += 1;
+      index += 1;
       continue;
     }
     if (char === '"') {
@@ -328,7 +378,7 @@ function parseCsvRows(text: string): string[][] {
       continue;
     }
     if ((char === '\n' || char === '\r') && !quoted) {
-      if (char === '\r' && next === '\n') i += 1;
+      if (char === '\r' && next === '\n') index += 1;
       row.push(field.trim());
       if (row.some(Boolean)) rows.push(row);
       row = [];
@@ -348,11 +398,7 @@ async function readCustomerFileRows(file: File): Promise<string[][]> {
     const rows: unknown[][] = await readSheet(file);
     return rows.map((row) => row.map((cell) => String(cell ?? '').trim()));
   }
-
-  if (/\.csv$/i.test(file.name)) {
-    return parseCsvRows(await file.text());
-  }
-
+  if (/\.csv$/i.test(file.name)) return parseCsvRows(await file.text());
   throw new Error('Unsupported file type');
 }
 
@@ -363,38 +409,101 @@ function normalizeCampaignPhone(value: unknown) {
   return digits;
 }
 
-function ExportBtn({ onClick, label = 'تصدير Excel' }: { onClick: () => void; label?: string }) {
-  return <button className="btn primary" onClick={onClick}><Download size={17} /> {label}</button>;
+function hasHeader(row: string[]) {
+  const joined = row.join(' ').toLowerCase();
+  return /phone|mobile|whatsapp|هاتف|جوال|رقم/.test(joined);
+}
+
+function analyzeCustomerRows(rows: string[][]): RecipientPreview {
+  const header = rows[0] || [];
+  const startsWithHeader = hasHeader(header);
+  const dataRows = startsWithHeader ? rows.slice(1) : rows;
+  const normalizedHeader = header.map((cell) => cell.trim().toLowerCase());
+  const phoneIndex = startsWithHeader ? normalizedHeader.findIndex((cell) => /phone|mobile|whatsapp|هاتف|جوال|رقم/.test(cell)) : 0;
+  const nameIndex = startsWithHeader ? normalizedHeader.findIndex((cell) => /name|اسم/.test(cell)) : 1;
+  const cityIndex = startsWithHeader ? normalizedHeader.findIndex((cell) => /city|مدينة/.test(cell)) : 2;
+  const seen = new Map<string, number>();
+  const recipients: RecipientRecord[] = [];
+  const duplicates: RecipientPreview['duplicates'] = [];
+  const invalid: RecipientPreview['invalid'] = [];
+
+  dataRows.forEach((row, index) => {
+    const rowNumber = (startsWithHeader ? index + 2 : index + 1);
+    const phone = normalizeCampaignPhone(row[Math.max(phoneIndex, 0)]);
+    if (!phone || phone.length < 9 || phone.length > 15) {
+      invalid.push({ row: rowNumber, rawPhone: String(row[Math.max(phoneIndex, 0)] || ''), reason: 'رقم غير صالح' });
+      return;
+    }
+    const firstRow = seen.get(phone);
+    if (firstRow) {
+      duplicates.push({ row: rowNumber, phone, firstRow });
+      return;
+    }
+    seen.set(phone, rowNumber);
+    recipients.push({
+      phone,
+      name: nameIndex >= 0 ? String(row[nameIndex] || '').trim() : '',
+      city: cityIndex >= 0 ? String(row[cityIndex] || '').trim() : '',
+    });
+  });
+
+  return {
+    totalRows: dataRows.length,
+    validCount: recipients.length,
+    duplicateCount: duplicates.length,
+    invalidCount: invalid.length,
+    recipients,
+    duplicates,
+    invalid,
+  };
+}
+
+function parseChatLog(raw?: string | null) {
+  if (!raw) return [] as Array<{ sender: string; text: string; at?: string }>;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((item) => item as { sender?: unknown; text?: unknown; at?: unknown })
+        .filter((item) => typeof item.text === 'string')
+        .map((item) => ({ sender: String(item.sender || 'bot'), text: String(item.text || ''), at: typeof item.at === 'string' ? item.at : undefined }));
+    }
+  } catch {
+    return [{ sender: 'bot', text: raw }];
+  }
+  return [];
 }
 
 function App() {
   const [filters, setFiltersRaw] = useState<FilterState>({ period: 'آخر 30 يوم', city: 'كل المدن', platform: 'كل المنصات' });
-  const setFilters = (partial: Partial<FilterState>) => setFiltersRaw(prev => ({ ...prev, ...partial }));
+  const setFilters = (partial: Partial<FilterState>) => setFiltersRaw((current) => ({ ...current, ...partial }));
 
   return (
     <FilterContext.Provider value={{ filters, setFilters }}>
-    <div className="app-shell" dir="rtl">
-      <Sidebar />
-      <main className="workspace">
-        <Topbar />
-        <div className="workspace-body">
-          <Routes>
-            <Route path="/" element={<DashboardPage />} />
-            <Route path="/platforms" element={<PlatformsPage />} />
-            <Route path="/brokers" element={<BrokersPage />} />
-            <Route path="/consumer" element={<ConsumerPage />} />
-            <Route path="/geo" element={<GeoPage />} />
-            <Route path="/issues" element={<IssuesPage />} />
-            <Route path="/opportunities" element={<OpportunitiesPage />} />
-            <Route path="/responses" element={<ResponsesPage />} />
-            <Route path="/survey-engine" element={<SurveyEnginePage />} />
-            <Route path="/campaigns" element={<CampaignsPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+      <MarketDataProvider>
+        <div className="app-shell" dir="rtl">
+          <Sidebar />
+          <main className="workspace">
+            <Topbar />
+            <div className="workspace-body">
+              <Routes>
+                <Route path="/" element={<DashboardPage />} />
+                <Route path="/platforms" element={<PlatformsPage />} />
+                <Route path="/brokers" element={<BrokersPage />} />
+                <Route path="/consumer" element={<ConsumerPage />} />
+                <Route path="/geo" element={<GeoPage />} />
+                <Route path="/issues" element={<IssuesPage />} />
+                <Route path="/opportunities" element={<OpportunitiesPage />} />
+                <Route path="/responses" element={<ResponsesPage />} />
+                <Route path="/survey-engine" element={<SurveyEnginePage />} />
+                <Route path="/campaigns" element={<CampaignsPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </div>
+          </main>
         </div>
-      </main>
-    </div>
+      </MarketDataProvider>
     </FilterContext.Provider>
   );
 }
@@ -403,12 +512,10 @@ function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="brand">
-        <div className="brand-mark">
-          <BarChart3 size={24} />
-        </div>
+        <div className="brand-mark"><BarChart3 size={24} /></div>
         <div>
           <strong>لينكر للذكاء السوقي</strong>
-          <span>Yemen Market Intelligence</span>
+          <span>WhatsApp Survey Ops</span>
         </div>
       </div>
       <nav className="nav-groups" aria-label="التنقل الرئيسي">
@@ -431,7 +538,6 @@ function Sidebar() {
 function Topbar() {
   const location = useLocation();
   const current = pageTitles.find((item) => item.path === location.pathname) ?? pageTitles[0];
-
   return (
     <header className="topbar">
       <div className="title-block">
@@ -444,6 +550,29 @@ function Topbar() {
         <span className="notify-dot" />
       </button>
     </header>
+  );
+}
+
+function FilterBar() {
+  const { filters, setFilters } = useFilters();
+  return (
+    <div className="topbar-tools">
+      <div className="search-box">
+        <Search size={18} />
+        <input aria-label="بحث عام" placeholder="بحث في النتائج والمؤشرات" />
+      </div>
+      <div className="filter-row compact">
+        <select value={filters.period} onChange={(event) => setFilters({ period: event.target.value })}>
+          {['آخر 24 ساعة', 'آخر 7 أيام', 'آخر 30 يوم', 'الربع الحالي'].map((item) => <option key={item}>{item}</option>)}
+        </select>
+        <select value={filters.city} onChange={(event) => setFilters({ city: event.target.value })}>
+          {['كل المدن', 'صنعاء', 'عدن', 'تعز', 'حضرموت', 'الحديدة'].map((item) => <option key={item}>{item}</option>)}
+        </select>
+        <select value={filters.platform} onChange={(event) => setFilters({ platform: event.target.value })}>
+          {['كل المنصات', 'شي إن', 'نون', 'أمازون', 'علي إكسبريس'].map((item) => <option key={item}>{item}</option>)}
+        </select>
+      </div>
+    </div>
   );
 }
 
@@ -460,51 +589,16 @@ function PageHeader({ kicker, title, description, action }: { kicker: string; ti
   );
 }
 
-function MetricCard({ icon: Icon, label, value, hint, delta, tone = 'teal' }: MetricCardProps) {
+function MetricCard({ icon: Icon, label, value, hint, tone = 'teal' }: { icon: LucideIcon; label: string; value: string; hint: string; tone?: Tone }) {
   return (
     <article className="metric-card">
-      <div className={`metric-icon tone-${tone}`}>
-        <Icon size={21} />
-      </div>
+      <div className={`metric-icon tone-${tone}`}><Icon size={21} /></div>
       <div className="metric-copy">
         <span>{label}</span>
         <strong>{value}</strong>
         <p>{hint}</p>
       </div>
-      {delta && <small className={delta.startsWith('-') ? 'delta down' : 'delta'}>{delta}</small>}
     </article>
-  );
-}
-
-function SafeResponsiveContainer({ children }: { children: ReactNode }) {
-  const frameRef = useRef<HTMLDivElement | null>(null);
-  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
-
-  useEffect(() => {
-    const node = frameRef.current;
-    if (!node) return;
-
-    const update = () => {
-      const box = node.getBoundingClientRect();
-      const width = Math.floor(box.width);
-      const height = Math.floor(box.height);
-      if (width > 0 && height > 0) setSize({ width, height });
-    };
-
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
-
-  return (
-    <div ref={frameRef} style={{ width: '100%', height: '100%', minWidth: 1, minHeight: 1 }}>
-      {size ? (
-        <ResponsiveContainer width={size.width} height={size.height}>
-          {children}
-        </ResponsiveContainer>
-      ) : null}
-    </div>
   );
 }
 
@@ -525,768 +619,443 @@ function Card({ title, subtitle, action, children, className = '' }: { title?: s
   );
 }
 
+function SafeResponsiveContainer({ children }: { children: ReactNode }) {
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      {children}
+    </ResponsiveContainer>
+  );
+}
+
+function EmptyState({ title = 'لا توجد بيانات حقيقية بعد', description = 'ستظهر البيانات هنا فور وصول ردود أو حملات من قاعدة البيانات.' }: { title?: string; description?: string }) {
+  return (
+    <div className="empty-state">
+      <Database size={28} />
+      <strong>{title}</strong>
+      <span>{description}</span>
+    </div>
+  );
+}
+
+function ExportBtn({ onClick, label = 'تصدير' }: { onClick: () => void; label?: string }) {
+  return <button className="btn primary" onClick={onClick}><Download size={17} /> {label}</button>;
+}
+
+function Toast({ message, type, onClose }: { message: string; type: 'success' | 'error'; onClose: () => void }) {
+  return (
+    <div className={`toast ${type}`}>
+      <span>{message}</span>
+      <button onClick={onClose} aria-label="إغلاق"><X size={16} /></button>
+    </div>
+  );
+}
+
 function StatusBadge({ value }: { value: string }) {
-  const tone = value.includes('نشط') || value.includes('مكتمل') || value.includes('متصدر') || value.includes('نامي') ? 'success' : value.includes('معلق') || value.includes('مراقبة') || value.includes('بحاجة') ? 'danger' : 'warning';
-  return <span className={`status ${tone}`}>{value}</span>;
+  const normalized = value || 'غير محدد';
+  const className = /completed|active|sent|مكتمل|نشط|مرسل/.test(normalized)
+    ? 'success'
+    : /draft|scheduled|pending|مسودة|مجدول|قيد/.test(normalized)
+      ? 'warning'
+      : /failed|abandoned|فشل|ملغي/.test(normalized)
+        ? 'danger'
+        : 'warning';
+  return <span className={`status ${className}`}>{normalized}</span>;
 }
 
-function Modal({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: ReactNode }) {
-  if (!open) return null;
+function CountBarList({ data }: { data: CountDatum[] }) {
+  const max = Math.max(...data.map((item) => item.value), 1);
+  if (!data.length) return <EmptyState />;
   return (
-    <div className="modal-overlay" onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.4)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center'}}>
-      <div className="modal-body" onClick={e => e.stopPropagation()} style={{background:'white',borderRadius:12,padding:24,maxWidth:600,width:'90%',maxHeight:'80vh',overflow:'auto'}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
-          <h3 style={{fontSize:18,fontWeight:700}}>{title}</h3>
-          <button onClick={onClose} style={{border:'none',background:'none',cursor:'pointer',fontSize:20,color:'#94a3b8'}}>×</button>
+    <div className="stack-list">
+      {data.map((item, index) => (
+        <div className="progress-row" key={item.name}>
+          <div><strong>{item.name}</strong><span>{formatNumber(item.value)}</span></div>
+          <div className="progress-track"><span style={{ width: `${Math.round((item.value / max) * 100)}%`, background: chartColors[index % chartColors.length] }} /></div>
         </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function Toast({ message, type, onClose }: { message: string; type: 'success'|'error'; onClose: () => void }) {
-  return (
-    <div style={{position:'fixed',bottom:24,left:24,zIndex:9999,background:type==='success'?'#0d9488':'#ef4444',color:'white',padding:'12px 20px',borderRadius:10,boxShadow:'0 4px 20px rgba(0,0,0,0.15)',display:'flex',alignItems:'center',gap:12}}>
-      <span>{type==='success'?'✅':'❌'}</span> {message}
-      <button onClick={onClose} style={{background:'none',border:'none',color:'white',cursor:'pointer',fontSize:16}}>×</button>
-    </div>
-  );
-}
-
-function Rating({ value }: { value: number }) {
-  return (
-    <span className="rating" aria-label={`التقييم ${value} من 5`}>
-      {Array.from({ length: 5 }, (_, index) => (
-        <Star key={index} size={15} fill={index < value ? 'currentColor' : 'none'} />
       ))}
-    </span>
-  );
-}
-
-function DashboardPage() {
-  const { filters } = useFilters();
-  const [toast, setToast] = useState<{message:string;type:'success'|'error'}|null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-
-  const handleRefresh = () => { setRefreshing(true); setTimeout(() => { setRefreshing(false); setToast({message:'تم تحديث البيانات بنجاح',type:'success'}); }, 800); };
-  const handleExport = () => { downloadCSV('لوحة_القيادة_التنفيذية.csv',['المؤشر','القيمة','التفاصيل'],[['إجمالي الردود','5,240','منذ بداية الشهر'],['المنصة الأكثر استخداماً','شي إن','42% من حجم الطلب'],['متوسط الرضا العام','4.2/5','تحسن طفيف'],['نسبة الاعتماد على الوسطاء','64%','من إجمالي المشتريات']]); setToast({message:'تم تصدير التقرير',type:'success'}); };
-
-  return (
-    <div className="page-stack">
-      <PageHeader
-        kicker="Executive Dashboard"
-        title="قراءة تنفيذية لحالة السوق اليمني"
-        description={`مؤشرات مركزة — ${filters.period} — ${filters.city} — ${filters.platform}`}
-        action={<div className="action-row"><button className="btn secondary" onClick={handleRefresh} disabled={refreshing}>{refreshing?'⏳ جاري التحديث...':'🔄 تحديث'}</button><ExportBtn onClick={handleExport} /></div>}
-      />
-      <div className="metric-grid four">
-        <MetricCard icon={MessageSquare} label="إجمالي الردود" value="5,240" hint="منذ بداية الشهر" delta="+12.5%" />
-        <MetricCard icon={ShoppingBag} label="المنصة الأكثر استخداماً" value="شي إن" hint="42% من حجم الطلب" delta="+8.2%" tone="purple" />
-        <MetricCard icon={Star} label="متوسط الرضا العام" value="4.2 / 5" hint="تحسن طفيف في آخر أسبوع" delta="+2.1%" tone="amber" />
-        <MetricCard icon={Truck} label="متوسط زمن التوصيل" value="14.8 يوم" hint="يشمل الشحن والجمارك" delta="-1.4 يوم" tone="blue" />
-      </div>
-      <div className="content-grid dashboard-grid">
-        <Card title="نمو الطلبات والردود" subtitle="آخر 6 أشهر" className="span-2">
-          <div className="chart-lg">
-            <SafeResponsiveContainer>
-              <LineChart data={marketTrend}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                <XAxis dataKey="month" reversed tickLine={false} axisLine={false} />
-                <YAxis tickLine={false} axisLine={false} />
-                <Tooltip />
-                <Line type="monotone" dataKey="orders" name="الطلبات" stroke="#0d9488" strokeWidth={3} dot={{ r: 4 }} isAnimationActive={false} />
-                <Line type="monotone" dataKey="responses" name="الردود" stroke="#3b82f6" strokeWidth={2.5} strokeDasharray="6 5" dot={{ r: 3 }} isAnimationActive={false} />
-              </LineChart>
-            </SafeResponsiveContainer>
-          </div>
-        </Card>
-        <Card title="الحصص السوقية" subtitle="حسب المنصة">
-          <DonutChart />
-        </Card>
-        <Card title="أعلى المشاكل تأثيراً" subtitle="مؤشر الشدة والتكرار">
-          <div className="chart-md">
-            <SafeResponsiveContainer>
-              <BarChart data={issues} layout="vertical" margin={{ right: 12, left: 12 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
-                <XAxis type="number" hide />
-                <YAxis dataKey="type" type="category" width={128} tickLine={false} axisLine={false} />
-                <Tooltip />
-                <Bar dataKey="severity" name="الشدة" fill="#0d9488" radius={[4, 4, 4, 4]} barSize={14} isAnimationActive={false} />
-              </BarChart>
-            </SafeResponsiveContainer>
-          </div>
-        </Card>
-        <Card title="أداء الوسطاء" subtitle="ترتيب تشغيلي مختصر" className="span-2">
-          <BrokersTable compact />
-        </Card>
-      </div>
-      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
     </div>
   );
 }
 
-function DonutChart() {
+function DonutChart({ data }: { data: CountDatum[] }) {
+  const chartData = withColors(data);
+  if (!chartData.length) return <EmptyState />;
   return (
     <div className="donut-wrap">
       <div className="chart-sm">
         <SafeResponsiveContainer>
           <PieChart>
-            <Pie data={marketShare} dataKey="value" nameKey="name" innerRadius={62} outerRadius={88} paddingAngle={3} isAnimationActive={false}>
-              {marketShare.map((entry) => <Cell key={entry.name} fill={entry.color} />)}
+            <Pie data={chartData} dataKey="value" nameKey="name" innerRadius={58} outerRadius={86} paddingAngle={3} isAnimationActive={false}>
+              {chartData.map((entry) => <Cell key={entry.name} fill={entry.color} />)}
             </Pie>
             <Tooltip />
           </PieChart>
         </SafeResponsiveContainer>
       </div>
       <div className="legend-list">
-        {marketShare.map((item) => (
-          <div key={item.name}>
-            <span style={{ background: item.color }} />
-            <strong>{item.name}</strong>
-            <em>{item.value}%</em>
-          </div>
+        {chartData.map((item) => (
+          <div key={item.name}><span style={{ background: item.color }} /><strong>{item.name}</strong><em>{formatNumber(item.value)}</em></div>
         ))}
       </div>
     </div>
   );
 }
 
-function PlatformsPage() {
+function DashboardPage() {
+  const { filters } = useFilters();
+  const { dashboard, responses, loading, error, refresh } = useMarketData();
+  const [toast, setToast] = useState<ToastState>(null);
+  const trend = useMemo(() => buildTrend(responses), [responses]);
+  const exportRows = [
+    ['إجمالي الردود', dashboard.totalResponses],
+    ['المنصة الأعلى', firstName(dashboard.platformBreakdown)],
+    ['نسبة الاعتماد على الوسطاء', percent(dashboard.brokerDependencyRatio)],
+    ['احتمالية الشراء المباشر', percent(dashboard.directProbabilityRatio)],
+  ];
+
   return (
     <div className="page-stack">
       <PageHeader
-        kicker="Platforms Analysis"
-        title="تحليل المنصات الدولية"
-        description="مقارنة الطلب، الرضا، زمن التوصيل، والمشاكل المتكررة لكل منصة في السوق اليمني."
-        action={<ExportBtn onClick={() => downloadCSV('تحليل_المنصات.csv',['المنصة','الحصة','الطلبات','NPS','التوصيل','المشكلة','الحالة'],platformRows.map(r=>[r.arabic,r.share,r.orders,String(r.nps),r.delivery,r.issue,r.status]))} />}
+        kicker="Executive Dashboard"
+        title="لوحة قيادة مبنية على البيانات الحقيقية"
+        description={`${filters.period} - ${filters.city} - ${filters.platform}`}
+        action={<div className="action-row"><button className="btn secondary" onClick={() => { void refresh(); setToast({ message: 'تم تحديث البيانات', type: 'success' }); }}><Activity size={17} /> تحديث</button><ExportBtn onClick={() => downloadCSV('dashboard.csv', ['المؤشر', 'القيمة'], exportRows)} /></div>}
       />
-      <div className="metric-grid six">
-        <MetricCard icon={ShoppingBag} label="المنصة الأعلى طلباً" value="شي إن" hint="42% من إجمالي الطلبات" delta="+18.2%" />
-        <MetricCard icon={PackageCheck} label="إجمالي الطلبات" value="124,500" hint="طلبات مكتملة ومعلقة" delta="+12.4%" tone="blue" />
-        <MetricCard icon={WalletCards} label="إجمالي الإنفاق" value="$3.02M" hint="عبر كل المنصات" delta="+15.6%" tone="green" />
-        <MetricCard icon={ShoppingBag} label="متوسط قيمة السلة" value="$45.20" hint="قيمة الطلب الواحد" delta="+5.4%" tone="purple" />
-        <MetricCard icon={Timer} label="متوسط وقت التوصيل" value="14.8 يوم" hint="يشمل الشحن والجمارك" delta="-1.4 يوم" tone="amber" />
-        <MetricCard icon={Star} label="متوسط رضا العملاء" value="4.3 / 5" hint="مؤشر رضا عام" delta="+0.3" tone="green" />
+      {error && <div className="insight-strip danger"><AlertTriangle size={20} /><strong>تعذر تحميل البيانات</strong><span>{error}</span></div>}
+      <div className="metric-grid four">
+        <MetricCard icon={MessageSquare} label="إجمالي الردود" value={loading ? '...' : formatNumber(dashboard.totalResponses)} hint="ردود مكتملة من قاعدة البيانات" />
+        <MetricCard icon={Globe2} label="المنصة الأعلى" value={firstName(dashboard.platformBreakdown)} hint="حسب الردود المكتملة" tone="blue" />
+        <MetricCard icon={Handshake} label="الاعتماد على الوسطاء" value={percent(dashboard.brokerDependencyRatio)} hint="من إجمالي المشتريات" tone="amber" />
+        <MetricCard icon={Send} label="رسائل مرسلة" value={formatNumber(dashboard.messageStats?.sentMessages)} hint={`ردود واردة: ${formatNumber(dashboard.messageStats?.inboundMessages)}`} tone="green" />
       </div>
-      <div className="content-grid two">
-        <Card title="شارت حجم الطلب حسب المنصة" subtitle="حجم الطلب والإنفاق حسب المنصة">
-          <div className="chart-lg">
-            <SafeResponsiveContainer>
-              <BarChart data={platformDemand}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                <XAxis dataKey="name" tickLine={false} axisLine={false} />
-                <YAxis yAxisId="orders" tickLine={false} axisLine={false} />
-                <YAxis yAxisId="spend" orientation="right" hide />
-                <Tooltip />
-                <Bar yAxisId="orders" dataKey="orders" name="إجمالي الطلبات" fill="#0d9488" radius={[6, 6, 0, 0]} isAnimationActive={false} />
-                <Bar yAxisId="spend" dataKey="spend" name="إجمالي الإنفاق" fill="#3b82f6" radius={[6, 6, 0, 0]} isAnimationActive={false} />
-              </BarChart>
-            </SafeResponsiveContainer>
-          </div>
+      <div className="content-grid dashboard-grid">
+        <Card title="اتجاه الردود" subtitle="تجميع شهري من السجلات الفعلية" className="span-2">
+          <div className="chart-lg">{trend.length ? <SafeResponsiveContainer><LineChart data={trend}><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} /><XAxis dataKey="month" /><YAxis /><Tooltip /><Line dataKey="responses" name="الردود" stroke="#0d9488" strokeWidth={3} isAnimationActive={false} /></LineChart></SafeResponsiveContainer> : <EmptyState />}</div>
         </Card>
-        <Card title="اتجاهات رضا العملاء" subtitle="متوسط التقييم آخر 6 أشهر">
-          <div className="chart-lg">
-            <SafeResponsiveContainer>
-              <LineChart data={satisfactionTrend}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                <XAxis dataKey="month" reversed tickLine={false} axisLine={false} />
-                <YAxis domain={[3, 5]} tickLine={false} axisLine={false} />
-                <Tooltip />
-                <Line type="monotone" dataKey="shein" name="شي إن" stroke="#0d9488" strokeWidth={3} dot={{ r: 4 }} isAnimationActive={false} />
-                <Line type="monotone" dataKey="noon" name="نون" stroke="#3b82f6" strokeWidth={2.5} dot={{ r: 3 }} isAnimationActive={false} />
-                <Line type="monotone" dataKey="amazon" name="أمازون" stroke="#f59e0b" strokeWidth={2.5} dot={{ r: 3 }} isAnimationActive={false} />
-              </LineChart>
-            </SafeResponsiveContainer>
-          </div>
-        </Card>
-        <Card title="المقارنة التشغيلية للمنصات" subtitle="طلب، رضا، توصيل">
-          <div className="chart-lg">
-            <SafeResponsiveContainer>
-              <BarChart data={platformChart}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                <XAxis dataKey="name" tickLine={false} axisLine={false} />
-                <YAxis tickLine={false} axisLine={false} />
-                <Tooltip />
-                <Bar dataKey="demand" name="الطلب" fill="#0d9488" radius={[6, 6, 0, 0]} isAnimationActive={false} />
-                <Bar dataKey="satisfaction" name="الرضا" fill="#3b82f6" radius={[6, 6, 0, 0]} isAnimationActive={false} />
-                <Bar dataKey="delivery" name="التوصيل" fill="#f59e0b" radius={[6, 6, 0, 0]} isAnimationActive={false} />
-              </BarChart>
-            </SafeResponsiveContainer>
-          </div>
-        </Card>
-        <Card title="رادار الأداء المتكامل" subtitle="طلب، رضا، سرعة، دفع، تتبع">
-          <div className="chart-lg">
-            <SafeResponsiveContainer>
-              <RadarChart data={[
-                { axis: 'الطلب', Shein: 92, Noon: 68, Amazon: 56 },
-                { axis: 'الرضا', Shein: 72, Noon: 64, Amazon: 78 },
-                { axis: 'السرعة', Shein: 64, Noon: 81, Amazon: 58 },
-                { axis: 'الدفع', Shein: 70, Noon: 84, Amazon: 62 },
-                { axis: 'التتبع', Shein: 75, Noon: 80, Amazon: 69 },
-              ]}>
-                <PolarGrid />
-                <PolarAngleAxis dataKey="axis" />
-                <Radar name="Shein" dataKey="Shein" stroke="#0d9488" fill="#0d9488" fillOpacity={0.25} isAnimationActive={false} />
-                <Radar name="Noon" dataKey="Noon" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.16} isAnimationActive={false} />
-                <Radar name="Amazon" dataKey="Amazon" stroke="#f59e0b" fill="#f59e0b" fillOpacity={0.12} isAnimationActive={false} />
-                <Tooltip />
-              </RadarChart>
-            </SafeResponsiveContainer>
-          </div>
-        </Card>
+        <Card title="الحصص حسب المنصة" subtitle="من إجابات العملاء"><DonutChart data={dashboard.platformBreakdown} /></Card>
+        <Card title="أعلى المشاكل" subtitle="حسب التكرار"><CountBarList data={dashboard.problemBreakdown.slice(0, 6)} /></Card>
+        <Card title="أحدث الردود" subtitle="آخر محادثات مكتملة" className="span-2"><ResponsesTable rows={dashboard.recentResponses} compact /></Card>
       </div>
-      <Card title="تفاصيل أداء المنصات" subtitle="جدول قابل للمراجعة التشغيلية">
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>المنصة</th>
-                <th>الحصة</th>
-                <th>الطلبات</th>
-                <th>NPS</th>
-                <th>زمن التوصيل</th>
-                <th>المشكلة الأعلى</th>
-                <th>الحالة</th>
-              </tr>
-            </thead>
-            <tbody>
-              {platformRows.map((row) => (
-                <tr key={row.platform}>
-                  <td><strong>{row.arabic}</strong><span>{row.platform}</span></td>
-                  <td>{row.share}</td>
-                  <td>{row.orders}</td>
-                  <td>{row.nps}</td>
-                  <td>{row.delivery}</td>
-                  <td>{row.issue}</td>
-                  <td><StatusBadge value={row.status} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
     </div>
+  );
+}
+
+function buildTrend(responses: ApiSurveyResponse[]) {
+  const counts = new Map<string, number>();
+  responses.filter((response) => response.status === 'completed').forEach((response) => {
+    const date = new Date(response.updatedAt || response.createdAt);
+    const key = Number.isNaN(date.getTime()) ? 'غير محدد' : date.toLocaleDateString('ar', { month: 'short', year: '2-digit' });
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
+  return Array.from(counts.entries()).map(([month, responsesCount]) => ({ month, responses: responsesCount })).slice(-8);
+}
+
+function PlatformsPage() {
+  const { dashboard } = useMarketData();
+  const total = dashboard.platformBreakdown.reduce((sum, item) => sum + item.value, 0);
+  return (
+    <DataBreakdownPage
+      kicker="Platforms Analysis"
+      title="تحليل المنصات"
+      description="كل الأرقام هنا من إجابات الاستبيان المحفوظة وليست تقديرات."
+      icon={Globe2}
+      primaryMetric={firstName(dashboard.platformBreakdown)}
+      primaryLabel="المنصة الأعلى"
+      data={dashboard.platformBreakdown}
+      headers={['المنصة', 'عدد الردود', 'الحصة']}
+      row={(item) => [item.name, formatNumber(item.value), percent(valueShare(item.value, total))]}
+      filename="platforms.csv"
+    />
   );
 }
 
 function BrokersPage() {
+  const { dashboard } = useMarketData();
+  const brokerRows = dashboard.topBrokers.map((broker) => ({ name: broker.name || broker.type || 'غير محدد', value: broker.mentionCount || 0 }));
   return (
     <div className="page-stack">
-      <PageHeader kicker="Brokers Analysis" title="تحليل قنوات الشراء غير المباشر" description="قياس جودة التنفيذ وتصنيف الوسطاء حسب النوع والقناة والجنس وتوزيع الثقة داخل السوق اليمني."
-        action={<ExportBtn onClick={() => downloadCSV('تحليل_قنوات_الشراء.csv',['الوسيط','المدينة','الطلبات','النجاح','التقييم','متوسط التوصيل','الحالة'],[['سما إكسبريس','صنعاء/عدن','3,420','91%','4.8','11.2 يوم','نشط جداً'],['محيط للتوصيل','تعز/إب','2,850','84%','4.5','13.5 يوم','نشط'],['أمانة لوجستك','الحديدة/المكلا','1,210','73%','4.2','16.4 يوم','مستقر'],['بوابة اليمن','حضرموت','980','68%','3.9','18.7 يوم','مراقبة']])} />}
-      />
+      <PageHeader kicker="Brokers Analysis" title="قنوات الشراء والوسطاء" description="تصنيف الوسطاء والقنوات من الردود الفعلية." action={<ExportBtn onClick={() => downloadCSV('brokers.csv', ['الوسيط', 'النوع', 'القناة'], dashboard.allBrokers.map((broker) => [broker.name || '', broker.type || '', broker.channel || '']))} />} />
       <div className="metric-grid four">
-        <MetricCard icon={Handshake} label="نسبة الاعتماد على الوسطاء" value="64%" hint="من إجمالي المشتريات" delta="+5.2%" />
-        <MetricCard icon={Users} label="إجمالي الوسطاء النشطين" value="124" hint="وسطاء عبر كل القنوات" delta="+12%" tone="blue" />
-        <MetricCard icon={WalletCards} label="متوسط عمولة الوسيط" value="12.5%" hint="متوسط عمولة الشراء" tone="amber" />
-        <MetricCard icon={Truck} label="أسرع وسيط توصيلاً" value="وسيط البرق الشامل" hint="متوسط: 9 أيام" tone="green" />
-      </div>
-      <div className="content-grid three">
-        <Card title="أنواع الوسطاء" subtitle="توزيع طبقة الشراء غير المباشر">
-          <div className="stack-list">
-            {[
-              { label: 'فرد (ذكر)', value: 42, color: '#0d9488' },
-              { label: 'فرد (أنثى)', value: 35, color: '#ec4899' },
-              { label: 'متجر إنستغرام', value: 15, color: '#8b5cf6' },
-              { label: 'بائع واتساب', value: 5, color: '#3b82f6' },
-              { label: 'متجر محلي', value: 3, color: '#f59e0b' },
-            ].map((item) => <ProgressRow key={item.label} label={item.label} value={item.value} color={item.color} />)}
-          </div>
-        </Card>
-        <Card title="قنوات الوسطاء" subtitle="أين يعمل الوسطاء">
-          <div className="stack-list">
-            {[
-              { label: 'إنستغرام', value: 58, color: '#ec4899' },
-              { label: 'واتساب', value: 28, color: '#3b82f6' },
-              { label: 'تيليجرام', value: 8, color: '#8b5cf6' },
-              { label: 'تيك توك', value: 4, color: '#0d9488' },
-              { label: 'محلي', value: 2, color: '#f59e0b' },
-            ].map((item) => <ProgressRow key={item.label} label={item.label} value={item.value} color={item.color} />)}
-          </div>
-        </Card>
-        <Card title="توزيع الجنس بين الوسطاء" subtitle="نسبة الذكور والإناث">
-          <div className="chart-md">
-            <SafeResponsiveContainer>
-              <PieChart>
-                <Pie data={[{name:'إناث',value:55,color:'#ec4899'},{name:'ذكور',value:45,color:'#3b82f6'}]} dataKey="value" innerRadius={55} outerRadius={80} paddingAngle={4} isAnimationActive={false}>
-                  {[{name:'إناث',color:'#ec4899'},{name:'ذكور',color:'#3b82f6'}].map(e=><Cell key={e.name} fill={e.color}/>)}
-                </Pie>
-                <Tooltip/>
-              </PieChart>
-            </SafeResponsiveContainer>
-          </div>
-          <div className="legend-inline">
-            <span><i style={{background:'#ec4899'}}/>إناث 55%</span>
-            <span><i style={{background:'#3b82f6'}}/>ذكور 45%</span>
-          </div>
-          <p className="metric-note">الوسيطات النسائية يحظين بأعلى ثقة (4.8⭐) مقارنة بـ 3.9⭐ للأفراد الذكور</p>
-        </Card>
+        <MetricCard icon={Handshake} label="نسبة الاعتماد على الوسطاء" value={percent(dashboard.brokerDependencyRatio)} hint="من الردود المكتملة" />
+        <MetricCard icon={Users} label="وسطاء مذكورون" value={formatNumber(dashboard.allBrokers.length)} hint="أسماء فريدة محفوظة" tone="blue" />
+        <MetricCard icon={Globe2} label="القناة الأعلى" value={firstName(dashboard.brokerChannelBreakdown)} hint="حسب ذكر العملاء" tone="purple" />
+        <MetricCard icon={MessageSquare} label="أعلى نوع وسيط" value={firstName(dashboard.brokerTypeBreakdown)} hint="من تحليل المحادثات" tone="amber" />
       </div>
       <div className="content-grid two">
-        <Card title="حجم الطلبات حسب الوسيط" subtitle="آخر 30 يوم">
-          <div className="chart-lg">
-            <SafeResponsiveContainer>
-              <BarChart data={brokers}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                <XAxis dataKey="name" tickLine={false} axisLine={false} />
-                <YAxis tickLine={false} axisLine={false} />
-                <Tooltip />
-                <Bar dataKey="orders" name="الطلبات" fill="#0d9488" radius={[7, 7, 0, 0]} isAnimationActive={false} />
-              </BarChart>
-            </SafeResponsiveContainer>
-          </div>
-        </Card>
-        <Card title="مؤشرات الجودة" subtitle="نجاح، تقييم، متوسط التوصيل">
-          <BrokersTable compact={false} />
-        </Card>
+        <Card title="أكثر الوسطاء ذكراً" subtitle="حسب عدد الإشارات"><CountBarList data={brokerRows} /></Card>
+        <Card title="قنوات الوسطاء" subtitle="توزيع واقعي"><DonutChart data={dashboard.brokerChannelBreakdown} /></Card>
       </div>
-      <Card title="مسار التشغيل" subtitle="نقاط القياس الحرجة">
-        <div className="process-grid">
-          {[
-            { label: 'استلام الطلب', value: '98%', icon: PackageCheck },
-            { label: 'تأكيد الدفع', value: '91%', icon: WalletCards },
-            { label: 'تسليم الشحنة', value: '84%', icon: Truck },
-            { label: 'إغلاق المحادثة', value: '76%', icon: CheckCircle2 },
-          ].map(({ label, value, icon: Icon }) => (
-            <div className="process-card" key={label}>
-              <Icon size={22} />
-              <strong>{value}</strong>
-              <span>{label}</span>
-            </div>
-          ))}
+      <Card title="سجل الوسطاء" subtitle="قابل للتصدير">
+        <div className="table-wrap">
+          <table><thead><tr><th>الاسم</th><th>النوع</th><th>القناة</th><th>الجنس</th><th>الإشارات</th></tr></thead><tbody>
+            {dashboard.allBrokers.map((broker, index) => <tr key={`${broker.name || broker.type}-${index}`}><td><strong>{broker.name || 'غير محدد'}</strong></td><td>{broker.type || 'غير محدد'}</td><td>{broker.channel || 'غير محدد'}</td><td>{broker.gender || 'غير محدد'}</td><td>{formatNumber(broker.mentionCount)}</td></tr>)}
+          </tbody></table>
+          {!dashboard.allBrokers.length && <EmptyState />}
         </div>
       </Card>
     </div>
-  );
-}
-
-function BrokersTable({ compact }: { compact: boolean }) {
-  return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>الوسيط</th>
-            <th>الطلبات</th>
-            <th>النجاح</th>
-            <th>التقييم</th>
-            {!compact && <th>متوسط التوصيل</th>}
-            <th>الحالة</th>
-          </tr>
-        </thead>
-        <tbody>
-          {brokers.map((broker) => (
-            <tr key={broker.name}>
-              <td><strong>{broker.name}</strong><span>{broker.city}</span></td>
-              <td>{formatNumber(broker.orders)}</td>
-              <td><Progress value={broker.success} /></td>
-              <td><Rating value={Math.round(broker.rating)} /></td>
-              {!compact && <td>{broker.avg}</td>}
-              <td><StatusBadge value={broker.status} /></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function Progress({ value }: { value: number }) {
-  return (
-    <span className="progress-cell">
-      <span className="progress-track"><span style={{ width: `${value}%` }} /></span>
-      <em>{value}%</em>
-    </span>
   );
 }
 
 function ConsumerPage() {
-  const genderData = [{ name: 'إناث', value: 58, color: '#ec4899' }, { name: 'ذكور', value: 42, color: '#94a3b8' }];
+  const { dashboard } = useMarketData();
   return (
     <div className="page-stack">
-      <PageHeader kicker="Consumer Behavior" title="تحليل سلوك المستهلك" description="قراءة ديموغرافية وسلوكية للشراء عبر المنصات الدولية من داخل السوق اليمني."
-        action={<ExportBtn onClick={() => downloadCSV('تحليل_سلوك_المستهلك.csv',['المؤشر','القيمة','التفاصيل'],[['إجمالي المتسوقين','57,650','مستجيب ومستخدم نشط'],['إجمالي الإنفاق','$1.24M','في جميع المنصات'],['متوسط قيمة السلة','$45.20','مقارنة بالشهر السابق'],['الفئة الأكثر طلباً','الأزياء','34% من الإجمالي'],['وسيلة الدفع المفضلة','الدفع للوسيط','نمو 8% في الرقمي'],['يوم الذروة','الخميس','نشاط بعد 8 مساءً'],['إناث','58%',''],['ذكور','42%',''],['الفئة 25-34','40%','الأكثر نشاطاً'],['الفئة 18-24','25%',''],['دوافع: السعر','78%',''],['دوافع: تنوع المنتجات','62%','']])} />}
-      />
-      <div className="metric-grid six">
-        <MetricCard icon={Users} label="إجمالي المتسوقين" value="57,650" hint="مستجيب ومستخدم نشط" delta="+9.6%" />
-        <MetricCard icon={WalletCards} label="إجمالي الإنفاق" value="$1.24M" hint="في جميع المنصات" delta="+15.4%" tone="green" />
-        <MetricCard icon={ShoppingBag} label="متوسط قيمة السلة" value="$45.20" hint="مقارنة بالشهر السابق" delta="+12%" tone="blue" />
-        <MetricCard icon={ShoppingBag} label="الفئة الأكثر طلباً" value="الأزياء" hint="34% من الإجمالي" tone="pink" />
-        <MetricCard icon={WalletCards} label="وسيلة الدفع المفضلة" value="الدفع للوسيط" hint="نمو 8% في الرقمي" tone="blue" />
-        <MetricCard icon={CalendarDays} label="يوم الذروة" value="الخميس" hint="نشاط بعد 8 مساءً" tone="purple" />
+      <PageHeader kicker="Consumer Behavior" title="سلوك المستهلك" description="الشرائح والدفع والتكرار من بيانات الردود فقط." action={<ExportBtn onClick={() => downloadCSV('consumer.csv', ['المؤشر', 'العدد'], [...dashboard.genderBreakdown, ...dashboard.ageGroupBreakdown, ...dashboard.paymentPreferenceBreakdown].map((item) => [item.name, item.value]))} />} />
+      <div className="metric-grid four">
+        <MetricCard icon={Users} label="إجمالي المستجيبين" value={formatNumber(dashboard.totalResponses)} hint="ردود مكتملة" />
+        <MetricCard icon={WalletCards} label="الدفع المفضل" value={firstName(dashboard.paymentPreferenceBreakdown)} hint="حسب الردود" tone="green" />
+        <MetricCard icon={CalendarDays} label="تكرار الشراء الأعلى" value={firstName(dashboard.frequencyBreakdown)} hint="من إجابات العملاء" tone="blue" />
+        <MetricCard icon={PackageCheck} label="نية الشراء المباشر" value={percent(dashboard.directProbabilityRatio)} hint="أكيد أو غالباً" tone="amber" />
       </div>
       <div className="content-grid two">
-        <Card title="توزيع الجنس" subtitle="عينة 500 مستجيب">
-          <div className="chart-md">
-            <SafeResponsiveContainer>
-              <PieChart>
-                <Pie data={genderData} dataKey="value" innerRadius={70} outerRadius={98} paddingAngle={4} isAnimationActive={false}>
-                  {genderData.map((entry) => <Cell key={entry.name} fill={entry.color} />)}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </SafeResponsiveContainer>
-          </div>
-          <div className="legend-inline">
-            {genderData.map((item) => <span key={item.name}><i style={{ background: item.color }} />{item.name} {item.value}%</span>)}
-          </div>
-        </Card>
-        <Card title="الفئات العمرية" subtitle="نسبة من العينة">
-          <div className="stack-list">
-            {ageGroups.map((item, index) => <ProgressRow key={item.name} label={item.name} value={item.value} color={chartColors[index]} />)}
-          </div>
-        </Card>
+        <Card title="الجنس" subtitle="توزيع المستجيبين"><DonutChart data={dashboard.genderBreakdown} /></Card>
+        <Card title="الفئات العمرية" subtitle="حسب الاستبيان"><CountBarList data={dashboard.ageGroupBreakdown} /></Card>
+        <Card title="طرق الدفع" subtitle="تفضيلات فعلية"><CountBarList data={dashboard.paymentPreferenceBreakdown} /></Card>
+        <Card title="تكرار الشراء" subtitle="وتيرة الطلب"><CountBarList data={dashboard.frequencyBreakdown} /></Card>
       </div>
-      <div className="content-grid two">
-        <Card title="مخطط وتيرة الشراء" subtitle="تكرار الشراء حسب السلوك">
-          <div className="chart-md">
-            <SafeResponsiveContainer>
-              <BarChart data={purchaseFrequency}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                <XAxis dataKey="label" tickLine={false} axisLine={false} />
-                <YAxis tickLine={false} axisLine={false} />
-                <Tooltip />
-                <Bar dataKey="value" name="النسبة" fill="#0d9488" radius={[6, 6, 0, 0]} barSize={34} isAnimationActive={false} />
-              </BarChart>
-            </SafeResponsiveContainer>
-          </div>
-        </Card>
-        <Card title="دوافع الشراء الرئيسية" subtitle="الأسباب الأكثر تأثيراً في قرار الشراء">
-          <div className="chart-md">
-            <SafeResponsiveContainer>
-              <BarChart data={consumerDrivers} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
-                <XAxis type="number" hide />
-                <YAxis dataKey="name" type="category" width={140} tickLine={false} axisLine={false} />
-                <Tooltip />
-                <Bar dataKey="value" fill="#3b82f6" radius={[4, 4, 4, 4]} barSize={18} isAnimationActive={false} />
-              </BarChart>
-            </SafeResponsiveContainer>
-          </div>
-        </Card>
-      </div>
-      <Card
-        title="شرائح المستهلكين"
-        action={<button className="link-btn">عرض كل الشرائح</button>}
-      >
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>شريحة المستهلك</th>
-                <th>عدد المستخدمين</th>
-                <th>متوسط الإنفاق</th>
-                <th>المنصات المفضلة</th>
-                <th>الحالة</th>
-              </tr>
-            </thead>
-            <tbody>
-              {consumerSegments.map((segment) => (
-                <tr key={segment.segment}>
-                  <td><strong>{segment.segment}</strong></td>
-                  <td>{segment.users}</td>
-                  <td>{segment.spend}</td>
-                  <td>{segment.platforms}</td>
-                  <td><StatusBadge value={segment.status} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-function ProgressRow({ label, value, color }: { label: string; value: number; color: string }) {
-  return (
-    <div className="progress-row">
-      <div><strong>{label}</strong><span>{value}%</span></div>
-      <div className="progress-track"><span style={{ width: `${value}%`, background: color }} /></div>
     </div>
   );
 }
 
 function GeoPage() {
+  const { dashboard } = useMarketData();
   return (
-    <div className="page-stack">
-      <PageHeader kicker="Geographic Analysis" title="التوزيع الجغرافي للطلب" description="مقارنة حجم الطلب، معدل الاستجابة، ومتوسط التوصيل بين المدن الرئيسية."
-        action={<ExportBtn onClick={() => downloadCSV('التوزيع_الجغرافي.csv',['المدينة','مؤشر الطلب','الاستجابة','متوسط التوصيل','الحصة'],[['صنعاء','92','78%','12.4 يوم','34%'],['عدن','86','71%','10.8 يوم','24%'],['تعز','74','63%','15.6 يوم','17%'],['حضرموت','69','58%','17.2 يوم','14%'],['الحديدة','55','49%','18.1 يوم','11%']])} />}
-      />
-      <div className="content-grid two">
-        <Card title="الطلب حسب المدينة" subtitle="Demand index">
-          <div className="chart-lg">
-            <SafeResponsiveContainer>
-              <BarChart data={cities}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                <XAxis dataKey="city" tickLine={false} axisLine={false} />
-                <YAxis tickLine={false} axisLine={false} />
-                <Tooltip />
-                <Bar dataKey="demand" name="الطلب" fill="#0d9488" radius={[7, 7, 0, 0]} isAnimationActive={false} />
-                <Bar dataKey="response" name="الاستجابة" fill="#3b82f6" radius={[7, 7, 0, 0]} isAnimationActive={false} />
-              </BarChart>
-            </SafeResponsiveContainer>
-          </div>
-        </Card>
-        <Card title="خريطة تشغيلية مبسطة" subtitle="أولوية التدخل حسب المدينة">
-          <div className="city-board">
-            {cities.map((city) => (
-              <div key={city.city} className="city-tile">
-                <span>{city.share}</span>
-                <strong>{city.city}</strong>
-                <em>{city.delivery} يوم</em>
-              </div>
-            ))}
-          </div>
-        </Card>
-      </div>
-      <Card title="تفاصيل المدن" subtitle="القراءة التفصيلية للمدن">
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>المدينة</th><th>مؤشر الطلب</th><th>الاستجابة</th><th>متوسط التوصيل</th><th>الحصة</th></tr></thead>
-            <tbody>
-              {cities.map((city) => <tr key={city.city}><td><strong>{city.city}</strong></td><td>{city.demand}</td><td><Progress value={city.response} /></td><td>{city.delivery} يوم</td><td>{city.share}</td></tr>)}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    </div>
+    <DataBreakdownPage
+      kicker="Geographic Analysis"
+      title="التوزيع الجغرافي"
+      description="توزيع المدن مبني على بيانات العملاء والردود المحفوظة."
+      icon={MapPinned}
+      primaryMetric={firstName(dashboard.cityBreakdown)}
+      primaryLabel="المدينة الأعلى"
+      data={dashboard.cityBreakdown}
+      headers={['المدينة', 'عدد الردود']}
+      row={(item) => [item.name, formatNumber(item.value)]}
+      filename="cities.csv"
+    />
   );
 }
 
 function IssuesPage() {
+  const { dashboard } = useMarketData();
   return (
-    <div className="page-stack">
-      <PageHeader kicker="Issues Matrix" title="مصفوفة المشاكل ونقاط الألم" description="ترتيب المشاكل حسب الشدة والتكرار وربطها بالمالك التشغيلي المناسب."
-        action={<ExportBtn onClick={() => downloadCSV('مصفوفة_المشاكل.csv',['المشكلة','الشدة','التكرار','المالك','الاتجاه'],[['تأخير الشحن','88','64','العمليات','+14%'],['رسوم جمركية','82','51','الشركاء','+9%'],['ضعف التتبع','74','46','التكامل','+6%'],['صعوبة الدفع','67','39','المنتج','-3%'],['تلف/فقدان الشحنة','63','28','الجودة','+2%']])} />}
-      />
-      <div className="content-grid two">
-        <Card title="ترتيب المشاكل" subtitle="حسب مؤشر الشدة">
-          <div className="chart-lg">
-            <SafeResponsiveContainer>
-              <BarChart data={issues} layout="vertical" margin={{ right: 12 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
-                <XAxis type="number" />
-                <YAxis dataKey="type" type="category" width={150} tickLine={false} axisLine={false} />
-                <Tooltip />
-                <Bar dataKey="severity" name="الشدة" fill="#ef4444" radius={[4, 4, 4, 4]} barSize={18} isAnimationActive={false} />
-                <Bar dataKey="frequency" name="التكرار" fill="#f59e0b" radius={[4, 4, 4, 4]} barSize={18} isAnimationActive={false} />
-              </BarChart>
-            </SafeResponsiveContainer>
-          </div>
-        </Card>
-        <Card title="مربعات التدخل" subtitle="أولوية حسب التأثير">
-          <div className="issue-matrix">
-            {issues.slice(0, 4).map((issue, index) => (
-              <div key={issue.type} className={`issue-tile priority-${index + 1}`}>
-                <span>{issue.trend}</span>
-                <strong>{issue.type}</strong>
-                <em>{issue.owner}</em>
-              </div>
-            ))}
-          </div>
-        </Card>
-      </div>
-      <Card title="سجل المشاكل" subtitle="توجيه المالك التشغيلي">
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>المشكلة</th><th>الشدة</th><th>التكرار</th><th>المالك</th><th>الاتجاه</th></tr></thead>
-            <tbody>{issues.map((issue) => <tr key={issue.type}><td><strong>{issue.type}</strong></td><td>{issue.severity}</td><td>{issue.frequency}</td><td>{issue.owner}</td><td>{issue.trend}</td></tr>)}</tbody>
-          </table>
-        </div>
-      </Card>
-    </div>
+    <DataBreakdownPage
+      kicker="Issues Matrix"
+      title="مصفوفة المشاكل"
+      description="ترتيب المشاكل حسب عدد مرات ظهورها في الاستبيانات."
+      icon={AlertTriangle}
+      primaryMetric={firstName(dashboard.problemBreakdown)}
+      primaryLabel="المشكلة الأعلى"
+      data={dashboard.problemBreakdown}
+      headers={['المشكلة', 'التكرار']}
+      row={(item) => [item.name, formatNumber(item.value)]}
+      filename="issues.csv"
+    />
   );
 }
 
 function OpportunitiesPage() {
+  const { dashboard } = useMarketData();
+  return (
+    <DataBreakdownPage
+      kicker="Opportunities"
+      title="الفرص والتوقعات"
+      description="ما يشجع العملاء على الطلب المباشر بناءً على اختياراتهم."
+      icon={PackageCheck}
+      primaryMetric={firstName(dashboard.directEncouragementBreakdown)}
+      primaryLabel="أهم محفز"
+      data={dashboard.directEncouragementBreakdown}
+      headers={['المحفز', 'عدد الاختيارات']}
+      row={(item) => [item.name, formatNumber(item.value)]}
+      filename="opportunities.csv"
+    />
+  );
+}
+
+function DataBreakdownPage({
+  kicker,
+  title,
+  description,
+  icon,
+  primaryMetric,
+  primaryLabel,
+  data,
+  headers,
+  row,
+  filename,
+}: {
+  kicker: string;
+  title: string;
+  description: string;
+  icon: LucideIcon;
+  primaryMetric: string;
+  primaryLabel: string;
+  data: CountDatum[];
+  headers: string[];
+  row: (item: CountDatum) => Array<string | number>;
+  filename: string;
+}) {
+  const Icon = icon;
   return (
     <div className="page-stack">
-      <PageHeader kicker="Opportunities & Insights" title="الفرص والتوقعات" description="تحديد مناطق الاستثمار الأعلى بناءً على الطلب المرتفع والمشاكل المتكررة."
-        action={<ExportBtn onClick={() => downloadCSV('الفرص_والتوقعات.csv',['الفرصة','الطلب','الألم','حجم السوق'],[['الدفع عند الاستلام','94','38','900'],['تتبع مباشر','82','74','700'],['تسليم منزلي','88','68','820'],['ضمان الاسترجاع','79','81','620'],['تجميع الشحنات','72','55','520']])} />}
-      />
-      <div className="metric-grid four">
-        <MetricCard icon={Lightbulb} label="أكبر فجوة خدمية" value="ضمان الاسترجاع" hint="طلب مرتفع وتلبية منخفضة" tone="amber" />
-        <MetricCard icon={Target} label="فرصة توسع" value="تسليم منزلي" hint="صنعاء وعدن أولاً" />
-        <MetricCard icon={Zap} label="أسرع أثر" value="الدفع عند الاستلام" hint="يرفع الإكمال 40%" tone="green" />
-        <MetricCard icon={Database} label="جاهزية البيانات" value="عالية" hint="500 مستجيب أولي" tone="blue" />
+      <PageHeader kicker={kicker} title={title} description={description} action={<ExportBtn onClick={() => downloadCSV(filename, headers, data.map(row))} />} />
+      <div className="metric-grid three">
+        <MetricCard icon={Icon} label={primaryLabel} value={primaryMetric} hint="من قاعدة البيانات" />
+        <MetricCard icon={MessageSquare} label="إجمالي العناصر" value={formatNumber(data.reduce((sum, item) => sum + item.value, 0))} hint="بعد التجميع" tone="blue" />
+        <MetricCard icon={Database} label="مصدر البيانات" value="فعلي" hint="بدون بيانات وهمية" tone="green" />
       </div>
       <div className="content-grid two">
-        <Card title="مصفوفة الفرص" subtitle="الطلب × الألم × حجم السوق">
-          <div className="chart-lg">
-            <SafeResponsiveContainer>
-              <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis type="number" dataKey="pain" name="الألم" domain={[0, 100]} />
-                <YAxis type="number" dataKey="demand" name="الطلب" domain={[0, 100]} />
-                <ZAxis type="number" dataKey="size" range={[120, 900]} />
-                <Tooltip cursor={{ strokeDasharray: '3 3' }} />
-                <Scatter name="الفرص" data={opportunities} fill="#0d9488" fillOpacity={0.82} isAnimationActive={false} />
-              </ScatterChart>
-            </SafeResponsiveContainer>
-          </div>
+        <Card title="الرسم البياني" subtitle="حسب العدد">
+          <div className="chart-lg">{data.length ? <SafeResponsiveContainer><BarChart data={data}><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} /><XAxis dataKey="name" /><YAxis /><Tooltip /><Bar dataKey="value" name="العدد" fill="#0d9488" radius={[7, 7, 0, 0]} isAnimationActive={false} /></BarChart></SafeResponsiveContainer> : <EmptyState />}</div>
         </Card>
-        <Card title="توقع النمو" subtitle="12 شهر">
-          <div className="chart-lg">
-            <SafeResponsiveContainer>
-              <AreaChart data={[
-                { q: 'Q1', fashion: 120, electronics: 82, logistics: 60 },
-                { q: 'Q2', fashion: 150, electronics: 105, logistics: 78 },
-                { q: 'Q3', fashion: 190, electronics: 135, logistics: 116 },
-                { q: 'Q4', fashion: 245, electronics: 170, logistics: 148 },
-              ]}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                <XAxis dataKey="q" />
-                <YAxis />
-                <Tooltip />
-                <Area type="monotone" dataKey="fashion" name="الأزياء" stackId="1" stroke="#ec4899" fill="#ec4899" fillOpacity={0.55} isAnimationActive={false} />
-                <Area type="monotone" dataKey="electronics" name="الإلكترونيات" stackId="1" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.45} isAnimationActive={false} />
-                <Area type="monotone" dataKey="logistics" name="الخدمات اللوجستية" stackId="1" stroke="#0d9488" fill="#0d9488" fillOpacity={0.5} isAnimationActive={false} />
-              </AreaChart>
-            </SafeResponsiveContainer>
-          </div>
-        </Card>
+        <Card title="التوزيع" subtitle="نسبة وتكرار"><DonutChart data={data} /></Card>
       </div>
+      <Card title="الجدول التفصيلي" subtitle={`${data.length} صف`}>
+        <div className="table-wrap">
+          <table><thead><tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr></thead><tbody>
+            {data.map((item) => <tr key={item.name}>{row(item).map((value, index) => <td key={`${item.name}-${index}`}>{index === 0 ? <strong>{value}</strong> : value}</td>)}</tr>)}
+          </tbody></table>
+          {!data.length && <EmptyState />}
+        </div>
+      </Card>
     </div>
   );
 }
 
 function ResponsesPage() {
+  const { responses } = useMarketData();
   const [searchText, setSearchText] = useState('');
-  const [cityFilter, setCityFilter] = useState('كل المدن');
-  const [platformFilter, setPlatformFilter] = useState('كل المنصات');
-  const [chatOpen, setChatOpen] = useState<(typeof responses)[0] | null>(null);
-  const [toast, setToast] = useState<{message:string;type:'success'|'error'}|null>(null);
-
-  const filtered = responses.filter(r =>
-    (r.name.includes(searchText) || r.phone.includes(searchText) || r.city.includes(searchText)) &&
-    (cityFilter === 'كل المدن' || r.city === cityFilter) &&
-    (platformFilter === 'كل المنصات' || r.platform === platformFilter)
-  );
+  const [statusFilter, setStatusFilter] = useState('كل الحالات');
+  const [chatOpen, setChatOpen] = useState<ApiSurveyResponse | null>(null);
+  const filtered = responses.filter((response) => {
+    const haystack = [response.customer?.name, response.customer?.phone, response.customer?.city, response.preferredPlatform, response.mainProblem, response.campaign?.name].join(' ');
+    return haystack.includes(searchText) && (statusFilter === 'كل الحالات' || response.status === statusFilter);
+  });
 
   return (
     <div className="page-stack">
-      <PageHeader
-        kicker="Survey Responses"
-        title="نتائج الاستبيانات والمحادثات"
-        description="مراجعة الاستجابات الخام وربط كل رد بالمنصة، المدينة، المشكلة، والتقييم."
-        action={<ExportBtn onClick={() => { downloadCSV('نتائج_الاستبيانات.csv',['المستجيب','الهاتف','المدينة','المنصة','المشكلة','التقييم','التاريخ','الحالة'],filtered.map(r=>[r.name,r.phone,r.city,r.platform,r.issue,String(r.rating),r.date,r.status])); setToast({message:'تم التصدير بنجاح',type:'success'}); }} />}
-      />
+      <PageHeader kicker="Survey Responses" title="نتائج الاستبيانات والمحادثات" description="كل رد مرتبط بالعميل والحملة والسجل الخام." action={<ExportBtn onClick={() => downloadCSV('responses.csv', ['العميل', 'الهاتف', 'المدينة', 'المنصة', 'المشكلة', 'الحالة'], filtered.map((response) => [response.customer?.name || '', response.customer?.phone || '', response.customer?.city || '', response.preferredPlatform || response.platforms || '', response.mainProblem || '', response.status]))} />} />
       <div className="metric-grid three">
-        <MetricCard icon={MessageSquare} label="إجمالي الردود" value={String(filtered.length)} hint="بعد تطبيق الفلاتر" />
-        <MetricCard icon={CheckCircle2} label="نسبة المكتملة" value={`${Math.round(filtered.filter(r=>r.status==='مكتمل').length/filtered.length*100)||0}%`} hint="من الإجمالي" tone="green" />
-        <MetricCard icon={ClipboardList} label="ردود اليوم" value={String(filtered.length)} hint="تحديث مباشر" tone="purple" />
+        <MetricCard icon={MessageSquare} label="إجمالي النتائج" value={formatNumber(filtered.length)} hint="بعد الفلاتر" />
+        <MetricCard icon={CheckCircle2} label="مكتملة" value={formatNumber(filtered.filter((response) => response.status === 'completed').length)} hint="استبيانات مكتملة" tone="green" />
+        <MetricCard icon={ClipboardList} label="قيد المتابعة" value={formatNumber(filtered.filter((response) => response.status !== 'completed').length)} hint="جلسات أو رفض" tone="amber" />
       </div>
       <Card title="فلترة النتائج" subtitle={`${filtered.length} نتيجة`}>
         <div className="filter-row">
-          <div className="search-box wide"><Search size={18} /><input placeholder="ابحث باسم المستجيب أو رقم الهاتف..." value={searchText} onChange={e => setSearchText(e.target.value)} /></div>
-          <select value={cityFilter} onChange={e => setCityFilter(e.target.value)} style={{padding:'8px 16px',borderRadius:8,border:'1px solid #e2e8f0'}}>{['كل المدن','صنعاء','عدن','تعز'].map(c=><option key={c}>{c}</option>)}</select>
-          <select value={platformFilter} onChange={e => setPlatformFilter(e.target.value)} style={{padding:'8px 16px',borderRadius:8,border:'1px solid #e2e8f0'}}>{['كل المنصات','Shein','Amazon','AliExpress','Noon'].map(p=><option key={p}>{p}</option>)}</select>
-          <button className="btn secondary" onClick={()=>{setSearchText('');setCityFilter('كل المدن');setPlatformFilter('كل المنصات');}}><Filter size={17}/> إعادة ضبط</button>
+          <div className="search-box wide"><Search size={18} /><input placeholder="ابحث باسم العميل أو الرقم أو الحملة" value={searchText} onChange={(event) => setSearchText(event.target.value)} /></div>
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>{['كل الحالات', 'completed', 'in_progress', 'abandoned'].map((item) => <option key={item}>{item}</option>)}</select>
+          <button className="btn secondary" onClick={() => { setSearchText(''); setStatusFilter('كل الحالات'); }}><Filter size={17} /> إعادة ضبط</button>
         </div>
       </Card>
-      <Card title="جدول الاستجابات" subtitle={filtered.length===0?'لا توجد نتائج':'آخر المحادثات'}>
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>المستجيب</th><th>المدينة</th><th>المنصة</th><th>المشكلة الأساسية</th><th>الرضا</th><th>التاريخ والوقت</th><th>الحالة</th><th>الإجراء</th></tr></thead>
-            <tbody>
-              {filtered.map((row) => (
-                <tr key={`${row.phone}-${row.date}`}>
-                  <td><strong>{row.name}</strong><span>{row.phone}</span></td><td>{row.city}</td><td>{row.platform}</td><td>{row.issue}</td><td><Rating value={row.rating} /></td><td>{row.date}</td>
-                  <td><StatusBadge value={row.status} /></td>
-                  <td><button className="link-btn" onClick={()=>setChatOpen(row)}>عرض المحادثة</button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <ResponsesTable rows={filtered} onOpen={setChatOpen} />
+      <Modal open={Boolean(chatOpen)} onClose={() => setChatOpen(null)} title={`محادثة ${chatOpen?.customer?.phone || ''}`}>
+        <div className="chat-preview real">
+          {parseChatLog(chatOpen?.rawChatLog).map((entry, index) => <p key={`${entry.at || ''}-${index}`} className={entry.sender === 'user' ? 'user-msg' : 'bot-msg'}>{entry.text}</p>)}
+          {chatOpen && !parseChatLog(chatOpen.rawChatLog).length && <EmptyState title="لا يوجد سجل محادثة" description="لم يتم حفظ rawChatLog لهذا الرد." />}
         </div>
-      </Card>
-      <Modal open={!!chatOpen} onClose={()=>setChatOpen(null)} title={`محادثة ${chatOpen?.name || ''}`}>
-        {chatOpen && (
-          <div style={{background:'#efeae2',padding:16,borderRadius:8,maxHeight:400,overflow:'auto'}}>
-            <p style={{background:'#dcf8c6',padding:'10px 14px',borderRadius:'12px 12px 0 12px',marginBottom:8,textAlign:'right'}}>👋 السلام عليكم... هل ممكن نبدأ؟</p>
-            <p style={{background:'white',padding:'10px 14px',borderRadius:'12px 12px 12px 0',marginBottom:8}}>نعم تفضلوا</p>
-            <p style={{background:'#dcf8c6',padding:'10px 14px',borderRadius:'12px 12px 0 12px',marginBottom:8,textAlign:'right'}}>من أي المنصات تشتري غالباً؟</p>
-            <p style={{background:'white',padding:'10px 14px',borderRadius:'12px 12px 12px 0',marginBottom:8}}>{chatOpen.platform}</p>
-            <p style={{background:'#dcf8c6',padding:'10px 14px',borderRadius:'12px 12px 0 12px',marginBottom:8,textAlign:'right'}}>شكراً لك جداً 🙏🌷</p>
-          </div>
-        )}
       </Modal>
-      {toast && <Toast message={toast.message} type={toast.type} onClose={()=>setToast(null)}/>}
     </div>
+  );
+}
+
+function ResponsesTable({ rows, compact, onOpen }: { rows: ApiSurveyResponse[]; compact?: boolean; onOpen?: (response: ApiSurveyResponse) => void }) {
+  return (
+    <Card title={compact ? undefined : 'جدول الاستجابات'} subtitle={compact ? undefined : `${rows.length} صف`}>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>العميل</th><th>الحملة</th><th>المدينة</th><th>المنصة</th><th>المشكلة</th><th>الحالة</th>{!compact && <th>الإجراء</th>}</tr></thead>
+          <tbody>
+            {rows.map((response) => (
+              <tr key={response.id}>
+                <td><strong>{response.customer?.name || 'بدون اسم'}</strong><span dir="ltr">{response.customer?.phone || response.customerId}</span></td>
+                <td>{response.campaign?.name || response.campaignId}</td>
+                <td>{response.customer?.city || response.city || 'غير محدد'}</td>
+                <td>{response.preferredPlatform || response.platforms || 'غير محدد'}</td>
+                <td>{response.mainProblem || 'غير محدد'}</td>
+                <td><StatusBadge value={response.status} /></td>
+                {!compact && <td><button className="link-btn" onClick={() => onOpen?.(response)}><Eye size={15} /> عرض</button></td>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!rows.length && <EmptyState />}
+      </div>
+    </Card>
   );
 }
 
 function SurveyEnginePage() {
   const [humanMode, setHumanMode] = useState(false);
-  const [questions, setQuestions] = useState([
-    { id: 'GREETING', label: '📩 الرسالة الافتتاحية', text: 'السلام عليكم 👋\nمعك فريق دراسة تجربة التسوق والتوصيل في اليمن 🙏\n\nحالياً نعمل دراسة بسيطة لفهم تجربة الناس مع التسوق من المواقع والتطبيقات العالمية مثل شي إن ونون وأمازون وغيرها، بهدف تحسين خدمات الشحن والتوصيل والدفع داخل اليمن.\n\nالاستبيان خفيف جداً وما يأخذ أكثر من دقيقتين 🌷\nوإجاباتك بتساعدنا نفهم احتياجات العملاء بشكل أفضل.\n\nهل ممكن نبدأ؟ 😊', options: [], key: '' },
-    { id: 'APPROVAL', label: '✅ رسالة الموافقة', text: 'ممتاز 🙏\nشكراً لك مقدماً 🌷\n\nأول سؤال 👇', options: [], key: '' },
-    { id: 'ASK_PLATFORMS', label: 'المنصات المستخدمة', text: 'من أي المنصات أو التطبيقات تشتري غالباً؟', options: ['شي إن','نون','أمازون','علي إكسبريس','تيمو','آي هيرب','نايس ون','متاجر إنستغرام','مواقع أو تطبيقات أخرى'], key: 'platforms' },
-    { id: 'ASK_FAVORITE_PLATFORM', label: 'المنصة المفضلة', text: 'وأي منصة تعتبرها الأكثر استخداماً بالنسبة لك؟', options: [], key: 'preferredPlatform' },
-    { id: 'ASK_PURCHASE_METHOD', label: 'طريقة الشراء', text: 'كيف تقوم بالشراء غالباً؟ 👀', options: ['أطلب بنفسي مباشرة من الموقع','أطلب عبر وسيط أو مندوب','أحياناً مباشرة وأحياناً عبر وسيط','أشتري من متجر محلي يعرض المنتجات'], key: 'purchaseMethod' },
-    { id: 'ASK_BROKER_SOURCE', label: 'مصدر الوسيط', text: 'غالباً كيف تعرفت على الوسيط؟', options: ['إنستغرام','واتساب','تيك توك','تيليجرام','صديق أو معرفة','متجر محلي','إعلان'], key: 'brokerSource' },
-    { id: 'ASK_BROKER_NAME', label: 'اسم الوسيط', text: 'ايش اسم الحساب أو الوسيط اللي تتعامل معه غالباً؟', options: [], key: 'brokerName' },
-    { id: 'ASK_BROKER_CHANNEL', label: 'قناة الوسيط', text: 'هذا الوسيط موجود غالباً فين؟', options: ['إنستغرام','واتساب','تيك توك','تيليجرام','متجر فعلي','مكان آخر'], key: 'brokerPlatform' },
-    { id: 'ASK_BROKER_REASON', label: 'سبب الاعتماد على الوسيط', text: 'ايش أكثر سبب يخليك تفضل الطلب عبر وسيط؟', options: ['ما عندي وسيلة دفع','ما أعرف طريقة الطلب','الوسيط أسهل وأسرع','أثق بالوسيط أكثر','يوفر الدفع عند الاستلام','يساعد في الشحن والجمارك','يوفر تجميع الطلبات','أقدر أتواصل معه بسهولة'], key: 'brokerReason' },
-    { id: 'ASK_DELIVERY_TIME', label: 'وقت التوصيل', text: 'كم تستغرق الطلبية حتى توصل لك؟ 🚚', options: ['أقل من أسبوعين','أسبوعين إلى شهر','أكثر من شهر','تختلف حسب الطلب'], key: 'deliveryTime' },
-    { id: 'ASK_HAS_COD', label: 'الدفع عند الاستلام', text: 'هل الوسيط يوفر الدفع عند الاستلام؟', options: ['نعم','لا','أحياناً'], key: 'cashOnDelivery' },
-    { id: 'ASK_HAS_PROBLEMS', label: 'وجود مشاكل', text: 'هل قد واجهت مشكلة مع الطلبات؟ 👀', options: ['نعم','لا'], key: 'hasProblems' },
-    { id: 'ASK_MAIN_PROBLEM', label: 'المشكلة الرئيسية', text: 'ايش أكثر مشكلة واجهتك؟', options: ['تأخير الطلب','ارتفاع الشحن','المنتج مختلف','ضعف التتبع','صعوبة التواصل','مشكلة في المقاس','مشكلة بالدفع','مشكلة بالاستلام','أخرى'], key: 'mainProblem' },
-    { id: 'ASK_ORDER_VALUE', label: 'متوسط قيمة الطلب', text: 'كم متوسط قيمة طلباتك عادة؟ 💰', options: ['أقل من 10 ألف','من 10 إلى 25 ألف','من 25 إلى 50 ألف','من 50 إلى 100 ألف','أكثر من 100 ألف'], key: 'orderValue' },
-    { id: 'ASK_FREQUENCY', label: 'تكرار الشراء', text: 'كم مرة تطلب من المواقع الخارجية؟ 👀', options: ['أسبوعياً','مرتين بالشهر','شهرياً','كل عدة أشهر','فقط بالمواسم'], key: 'purchaseFrequency' },
-    { id: 'ASK_CITY', label: 'المدينة', text: 'أي مدينة أنت؟ 🌍', options: [], key: 'city' },
-    { id: 'ASK_AGE', label: 'الفئة العمرية', text: 'الفئة العمرية؟', options: ['أقل من 18','18 - 24','25 - 34','35 - 44','أكثر من 45'], key: 'ageGroup' },
-    { id: 'ASK_GENDER', label: 'الجنس', text: 'الجنس؟', options: ['ذكر','أنثى'], key: 'gender' },
-    { id: 'ASK_PAYMENT_METHOD', label: 'طريقة الدفع', text: 'ايش طريقة الدفع اللي تفضلها غالباً؟ 💳', options: ['الدفع عند الاستلام','تحويل','محفظة إلكترونية','بطاقة بنكية'], key: 'paymentPreference' },
-    { id: 'ASK_CANCELED_BEFORE', label: 'إلغاء طلب سابق', text: 'هل سبق وألغيت طلب قبل؟ 👀', options: ['نعم','لا'], key: 'canceledBefore' },
-    { id: 'ASK_CANCEL_REASON', label: 'سبب الإلغاء', text: 'ايش كان السبب الرئيسي للإلغاء؟', options: ['تأخير','تغير السعر','غيرت رأيي','ضعف التواصل','فقدت الثقة','تكلفة الشحن','سبب آخر'], key: 'cancelReason' },
-    { id: 'ASK_BIGGEST_ANNOYANCE', label: 'أكثر شيء مزعج', text: 'ايش أكثر شيء يزعجك في تجربة الطلب من الخارج؟', options: ['التأخير','ارتفاع تكلفة الشحن','عدم وجود دفع عند الاستلام','ضعف الثقة','صعوبة المرتجعات','اختلاف المنتج','ضعف التتبع','عدم وضوح السعر النهائي','ضعف التواصل','مشاكل الجمارك أو الرسوم'], key: 'biggestAnnoyance' },
-    { id: 'ASK_DIRECT_PROBABILITY', label: 'احتمالية الشراء المباشر', text: 'إذا دعمت شي إن اليمن رسمياً… هل تتوقع تطلب مباشرة منها؟', options: ['أكيد','غالباً','ممكن','لا'], key: 'directPurchaseProb' },
-    { id: 'ASK_DIRECT_ENCOURAGEMENT', label: 'ما يشجع للشراء المباشر', text: 'ايش أكثر شيء بيشجعك تطلب مباشرة؟', options: ['الدفع عند الاستلام','سرعة التوصيل','تتبع واضح','أسعار أفضل','ضمان واسترجاع','ثقة أكبر'], key: 'directEncouragement' },
-    { id: 'ASK_DIRECT_HESITATION', label: 'سبب التردد', text: 'ايش أكثر شيء يخليك متردد حالياً؟', options: [], key: 'directHesitation' },
-    { id: 'ASK_REFUSAL_REASON', label: 'سبب الرفض', text: 'ممكن نعرف السبب؟ 🌷', options: [], key: 'refusalReason' },
-    { id: 'COMPLETED', label: '🎉 الرسالة الختامية', text: 'شكراً لك جداً 🙏🌷\nمشاركتك أفادتنا بشكل كبير، وبإذن الله تساعد في تحسين خدمات التسوق والتوصيل داخل اليمن.\n\nنتمنى لك يوم سعيد 💜', options: [], key: '' },
-    { id: 'REJECTED', label: '🚫 رسالة الرفض', text: 'ولا يهمك أبداً 🌷\nشكراً لوقتك، ونتمنى لك يوم جميل 🙏', options: [], key: '' },
-  ]);
-
-  const [selectedQ, setSelectedQ] = useState<string | null>(null);
+  const [questions, setQuestions] = useState<SurveyQuestion[]>(defaultQuestions);
+  const [selectedId, setSelectedId] = useState(defaultQuestions[0]?.id || '');
+  const [activeTab, setActiveTab] = useState<'content' | 'logic' | 'type' | 'preview' | 'database'>('content');
   const [newOption, setNewOption] = useState('');
+  const [toast, setToast] = useState<ToastState>(null);
+  const dragQuestion = useRef<number | null>(null);
+  const selected = questions.find((question) => question.id === selectedId) || questions[0];
 
-  const selected = questions.find(q => q.id === selectedQ);
+  useEffect(() => {
+    fetchJson<{ humanMode?: boolean; questions?: SurveyQuestion[] }>('/api/admin/survey/config')
+      .then((config) => {
+        setHumanMode(Boolean(config.humanMode));
+        if (Array.isArray(config.questions) && config.questions.length) {
+          setQuestions(config.questions.map((question) => ({ ...question, options: question.options || [], type: question.type || 'open_text' })));
+          setSelectedId(config.questions[0]?.id || defaultQuestions[0].id);
+        }
+      })
+      .catch(() => undefined);
+  }, []);
+
+  const updateQuestion = (id: string, patch: Partial<SurveyQuestion>) => {
+    setQuestions((current) => current.map((question) => question.id === id ? { ...question, ...patch } : question));
+  };
 
   const addQuestion = () => {
-    const newId = `ASK_CUSTOM_${Date.now()}`;
-    setQuestions([...questions, { id: newId, label: 'سؤال جديد', text: 'نص السؤال', options: [], key: '' }]);
-    setSelectedQ(newId);
+    const id = `ASK_CUSTOM_${Date.now()}`;
+    const question: SurveyQuestion = { id, label: 'سؤال جديد', text: 'اكتب نص السؤال هنا', options: [], key: '', type: 'open_text' };
+    setQuestions((current) => [...current, question]);
+    setSelectedId(id);
+    setActiveTab('content');
   };
 
   const deleteQuestion = (id: string) => {
-    setQuestions(questions.filter(q => q.id !== id));
-    if (selectedQ === id) setSelectedQ(null);
+    const next = questions.filter((question) => question.id !== id);
+    setQuestions(next);
+    setSelectedId(next[0]?.id || '');
   };
 
-  const updateQuestion = (id: string, field: string, value: string) => {
-    setQuestions(questions.map(q => q.id === id ? { ...q, [field]: value } : q));
+  const moveQuestion = (from: number, to: number) => {
+    if (from === to || from < 0 || to < 0) return;
+    setQuestions((current) => {
+      const next = [...current];
+      const [item] = next.splice(from, 1);
+      next.splice(to, 0, item);
+      return next;
+    });
   };
 
-  const addOption = (id: string) => {
-    if (!newOption.trim()) return;
-    setQuestions(questions.map(q => q.id === id ? { ...q, options: [...q.options, newOption.trim()] } : q));
+  const addOption = () => {
+    if (!selected || !newOption.trim()) return;
+    updateQuestion(selected.id, { options: [...selected.options, newOption.trim()] });
     setNewOption('');
   };
 
-  const removeOption = (id: string, idx: number) => {
-    setQuestions(questions.map(q => q.id === id ? { ...q, options: q.options.filter((_, i) => i !== idx) } : q));
+  const moveOption = (from: number, to: number) => {
+    if (!selected || from === to || to < 0 || to >= selected.options.length) return;
+    const options = [...selected.options];
+    const [item] = options.splice(from, 1);
+    options.splice(to, 0, item);
+    updateQuestion(selected.id, { options });
   };
 
-  const saveConfig = () => {
-    fetch('/api/admin/survey/config', {
+  const saveConfig = async () => {
+    await fetch('/api/admin/survey/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ humanMode }),
+      body: JSON.stringify({ humanMode, questions }),
     });
+    setToast({ message: 'تم حفظ محرك الاستبيان', type: 'success' });
   };
 
   return (
@@ -1294,403 +1063,311 @@ function SurveyEnginePage() {
       <PageHeader
         kicker="Survey Engine"
         title="محرك الاستبيان"
-        description="إدارة الأسئلة والخيارات والتفرعات مع وضع المحادثة البشرية."
-        action={
-          <div className="action-row">
-            <label className="toggle-chip" style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}}>
-              <span className="text-body-md text-secondary">وضع المحادثة البشرية</span>
-              <input type="checkbox" checked={humanMode} onChange={e => setHumanMode(e.target.checked)} style={{width:18,height:18,accentColor:'#0d9488'}} />
-            </label>
-            <button className="btn primary" onClick={saveConfig}><ShieldCheck size={17} /> حفظ وإرسال</button>
-          </div>
-        }
+        description="أنواع الأسئلة، الخيارات، المنطق، المعاينة، وربط قاعدة البيانات من شاشة واحدة."
+        action={<div className="action-row"><label className="toggle-chip"><span>وضع المحادثة البشرية</span><input type="checkbox" checked={humanMode} onChange={(event) => setHumanMode(event.target.checked)} /></label><button className="btn primary" onClick={() => void saveConfig()}><Save size={17} /> حفظ</button></div>}
       />
-
-      <div className="content-grid three">
-        <div className="panel" style={{gridColumn:'span 1'}}>
-          <div className="panel-head"><h3>قائمة الأسئلة (28)</h3></div>
-          <div style={{maxHeight:'70vh',overflow:'auto'}}>
-            {questions.map((q, i) => (
+      <div className="survey-builder">
+        <Card title={`الأسئلة (${questions.length})`} action={<button className="btn secondary" onClick={addQuestion}><Plus size={16} /> إضافة</button>} className="survey-list-panel">
+          <div className="survey-question-list">
+            {questions.map((question, index) => (
               <button
-                key={q.id}
-                onClick={() => setSelectedQ(q.id)}
-                className={`filter-chip`}
-                style={{display:'block',width:'100%',textAlign:'right',marginBottom:4,background:selectedQ===q.id?'#f0fdfa':undefined,borderRight:selectedQ===q.id?'3px solid #0d9488':'3px solid transparent'}}
+                key={question.id}
+                draggable
+                onDragStart={() => { dragQuestion.current = index; }}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={() => { moveQuestion(dragQuestion.current ?? index, index); dragQuestion.current = null; }}
+                className={`survey-question-item ${selectedId === question.id ? 'active' : ''}`}
+                onClick={() => setSelectedId(question.id)}
               >
-                <span style={{fontSize:11,color:'#64748b'}}>{i+1}.</span> {q.label}
+                <GripVertical size={15} />
+                <span>{index + 1}</span>
+                <strong>{question.label}</strong>
+                <em>{questionTypes.find((type) => type.value === question.type)?.label}</em>
               </button>
             ))}
-            <button onClick={addQuestion} className="btn secondary" style={{width:'100%',marginTop:8}}>+ إضافة سؤال جديد</button>
+          </div>
+        </Card>
+        <Card className="survey-editor-panel" title={selected?.label || 'اختر سؤالاً'}>
+          {selected ? (
+            <>
+              <div className="tabs">
+                {[
+                  ['content', 'المحتوى', Type],
+                  ['logic', 'المنطق', ListChecks],
+                  ['type', 'نوع السؤال', Bot],
+                  ['preview', 'المعاينة', Eye],
+                  ['database', 'قاعدة البيانات', Database],
+                ].map(([key, label, Icon]) => (
+                  <button key={String(key)} className={activeTab === key ? 'active' : ''} onClick={() => setActiveTab(key as typeof activeTab)}><Icon size={16} /> {String(label)}</button>
+                ))}
+              </div>
+              {activeTab === 'content' && (
+                <div className="question-grid relaxed">
+                  <label className="span-full"><span>نص السؤال</span><textarea value={selected.text} onChange={(event) => updateQuestion(selected.id, { text: event.target.value })} rows={7} /></label>
+                  <label><span>عنوان السؤال</span><input value={selected.label} onChange={(event) => updateQuestion(selected.id, { label: event.target.value })} /></label>
+                  <label><span>المعرف التقني</span><input value={selected.id} onChange={(event) => updateQuestion(selected.id, { id: event.target.value })} dir="ltr" /></label>
+                </div>
+              )}
+              {activeTab === 'type' && (
+                <div className="question-grid relaxed">
+                  <label><span>نوع السؤال</span><select value={selected.type} onChange={(event) => updateQuestion(selected.id, { type: event.target.value as QuestionType, options: event.target.value === 'yes_no' ? ['نعم', 'لا'] : selected.options })}>{questionTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}</select></label>
+                  <div className="span-full option-editor">
+                    <div className="option-head"><strong>الخيارات ({selected.options.length})</strong><span>يمكن إعادة ترتيب الخيارات</span></div>
+                    {selected.options.length ? selected.options.map((option, index) => (
+                      <div className="option-row" key={`${option}-${index}`}>
+                        <GripVertical size={15} />
+                        <input value={option} onChange={(event) => {
+                          const options = [...selected.options];
+                          options[index] = event.target.value;
+                          updateQuestion(selected.id, { options });
+                        }} />
+                        <button className="icon-btn" onClick={() => moveOption(index, index - 1)} aria-label="رفع">↑</button>
+                        <button className="icon-btn" onClick={() => moveOption(index, index + 1)} aria-label="خفض">↓</button>
+                        <button className="icon-btn danger" onClick={() => updateQuestion(selected.id, { options: selected.options.filter((_, optionIndex) => optionIndex !== index) })} aria-label="حذف"><Trash2 size={15} /></button>
+                      </div>
+                    )) : <EmptyState title="لا توجد خيارات" description="هذا السؤال سيعامل كسؤال مفتوح ما لم تضف خيارات." />}
+                    <div className="inline-add">
+                      <input value={newOption} onChange={(event) => setNewOption(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') addOption(); }} placeholder="أضف خياراً جديداً" />
+                      <button className="btn secondary" onClick={addOption}><Plus size={16} /> إضافة</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {activeTab === 'logic' && (
+                <div className="question-grid relaxed">
+                  <label><span>السؤال التالي الافتراضي</span><select defaultValue=""><option value="">حسب ترتيب القائمة</option>{questions.filter((question) => question.id !== selected.id).map((question) => <option key={question.id} value={question.id}>{question.label}</option>)}</select></label>
+                  <label><span>السلوك عند عدم الفهم</span><select defaultValue="repeat"><option value="repeat">إعادة صياغة السؤال</option><option value="open">قبول كنص مفتوح</option></select></label>
+                  <div className="insight-strip"><ListChecks size={20} /><strong>المنطق الحالي</strong><span>المحرك يحافظ على مسار الاستبيان الأساسي ويستخدم نوع السؤال لتغيير واجهة WhatsApp والحفظ.</span></div>
+                </div>
+              )}
+              {activeTab === 'preview' && <WhatsAppQuestionPreview question={selected} humanMode={humanMode} />}
+              {activeTab === 'database' && (
+                <div className="question-grid relaxed">
+                  <label><span>الحقل المرتبط بقاعدة البيانات</span><input value={selected.key} onChange={(event) => updateQuestion(selected.id, { key: event.target.value })} placeholder="directEncouragement" dir="ltr" /></label>
+                  <label><span>طريقة الحفظ</span><select value={selected.type === 'multi_select' ? 'array_text' : 'text'} disabled><option value="text">نص</option><option value="array_text">قائمة نصية مفصولة</option></select></label>
+                  <div className="insight-strip"><Database size={20} /><strong>تأثير الحفظ</strong><span>سيتم حفظ إجابات الاختيارات المتعددة كنص منظف مفصول بعلامة "،" ليدخل في التحليلات والرسوم.</span></div>
+                </div>
+              )}
+              <div className="editor-actions">
+                <button className="btn secondary danger-text" onClick={() => deleteQuestion(selected.id)}><Trash2 size={16} /> حذف السؤال</button>
+              </div>
+            </>
+          ) : <EmptyState title="اختر سؤالاً" description="ابدأ من القائمة اليمنى أو أضف سؤالاً جديداً." />}
+        </Card>
+      </div>
+      {humanMode && <div className="insight-strip warning"><MessageSquare size={20} /><strong>وضع المحادثة البشرية مفعل</strong><span>سيتم تقليل النمط الآلي، تعطيل القوائم عند الحاجة، وإضافة تأخير عشوائي في الخادم.</span></div>}
+      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+    </div>
+  );
+}
+
+function WhatsAppQuestionPreview({ question, humanMode }: { question: SurveyQuestion; humanMode: boolean }) {
+  const isMulti = question.type === 'multi_select';
+  const hasInteractive = question.options.length > 0 && !humanMode && question.type !== 'open_text' && question.type !== 'text_input';
+  return (
+    <div className="whatsapp-preview-frame">
+      <div className="wa-bubble outgoing">
+        <strong>{humanMode ? 'رسالة بشرية' : isMulti ? 'اختيارات متعددة' : 'سؤال تفاعلي'}</strong>
+        <p>{question.text}</p>
+        {isMulti && !humanMode && <span>اكتب الأرقام مفصولة بفواصل لاختيار أكثر من إجابة.</span>}
+      </div>
+      {hasInteractive && (
+        <div className="wa-list">
+          <button><ListChecks size={18} /> {isMulti ? 'اختيارات متعددة' : 'اختر الإجابة'}</button>
+          <div>
+            {question.options.map((option, index) => <p key={option}><strong>{option}</strong><span>{isMulti ? `اختيار ${index + 1}` : ''}</span></p>)}
           </div>
         </div>
-
-        <div className="panel" style={{gridColumn:'span 2'}}>
-          {!selected ? (
-            <div style={{padding:40,textAlign:'center',color:'#94a3b8'}}>اختر سؤالاً من القائمة لتعديله</div>
-          ) : (
-            <div className="question-grid" style={{gap:16}}>
-              <label>
-                <span>نص السؤال المرسل للعميل</span>
-                <textarea
-                  value={selected.text}
-                  onChange={e => updateQuestion(selected.id, 'text', e.target.value)}
-                  rows={3}
-                  style={{width:'100%',padding:10,borderRadius:8,border:'1px solid #e2e8f0',fontSize:14,resize:'vertical'}}
-                />
-              </label>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-                <label>
-                  <span>المعرف التقني</span>
-                  <input value={selected.id} readOnly style={{background:'#f1f5f9',width:'100%'}} />
-                </label>
-                <label>
-                  <span>الحقل في قاعدة البيانات</span>
-                  <input value={selected.key} onChange={e => updateQuestion(selected.id, 'key', e.target.value)} placeholder="مثلاً: productCategory" style={{width:'100%'}} />
-                </label>
-              </div>
-
-              <div>
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-                  <span style={{fontWeight:600,fontSize:13}}>الخيارات ({selected.options.length})</span>
-                  {selected.options.length > 0 && <span style={{fontSize:11,color:'#64748b'}}>اسحب للترتيب</span>}
-                </div>
-                {selected.options.length === 0 ? (
-                  <div style={{padding:20,textAlign:'center',border:'1px dashed #e2e8f0',borderRadius:8,color:'#94a3b8'}}>سؤال مفتوح (بدون خيارات)</div>
-                ) : (
-                  <div style={{display:'flex',flexDirection:'column',gap:6}}>
-                    {selected.options.map((opt, oIdx) => (
-                      <div key={oIdx} style={{display:'flex',gap:8,alignItems:'center'}}>
-                        <span style={{fontSize:12,color:'#94a3b8',minWidth:24}}>{oIdx+1}.</span>
-                        <input
-                          value={opt}
-                          onChange={e => {
-                            const newOpts = [...selected!.options];
-                            newOpts[oIdx] = e.target.value;
-                            updateQuestion(selected!.id, 'options' as never, '' as never);
-                            setQuestions(questions.map(q => q.id === selected!.id ? { ...q, options: newOpts } : q));
-                          }}
-                          style={{flex:1,padding:'6px 10px',borderRadius:6,border:'1px solid #e2e8f0',fontSize:13}}
-                        />
-                        <button onClick={() => removeOption(selected!.id, oIdx)} style={{color:'#ef4444',border:'none',background:'none',cursor:'pointer',fontSize:18}}>×</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <div style={{display:'flex',gap:8,marginTop:8}}>
-                  <input
-                    value={newOption}
-                    onChange={e => setNewOption(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && addOption(selected.id)}
-                    placeholder="أضف خياراً جديداً..."
-                    style={{flex:1,padding:'6px 10px',borderRadius:6,border:'1px solid #e2e8f0',fontSize:13}}
-                  />
-                  <button onClick={() => addOption(selected.id)} className="btn secondary" style={{fontSize:12}}>+ إضافة</button>
-                </div>
-              </div>
-
-              <div style={{display:'flex',gap:8,justifyContent:'flex-end',borderTop:'1px solid #e2e8f0',paddingTop:12,marginTop:8}}>
-                <button onClick={() => deleteQuestion(selected.id)} className="btn secondary" style={{color:'#ef4444',borderColor:'#fecaca'}}>🗑 حذف السؤال</button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {humanMode && (
-        <div className="insight-strip" style={{background:'#fef3c7',border:'1px solid #f59e0b'}}>
-          <MessageSquare size={22} style={{color:'#f59e0b'}} />
-          <strong style={{color:'#92400e'}}>وضع المحادثة البشرية مفعّل</strong>
-          <span style={{color:'#a16207'}}>الأسئلة سترسل بدون أرقام أو خيارات تفاعلية. ستبدو كأنها محادثة طبيعية مع شخص حقيقي.</span>
-        </div>
       )}
+      {humanMode && question.options.length > 0 && <div className="wa-bubble outgoing soft">{question.options.join('، ')}</div>}
     </div>
   );
 }
 
 function CampaignsPage() {
+  const { campaigns, dashboard, refresh } = useMarketData();
+  const [showModal, setShowModal] = useState(false);
   const [launching, setLaunching] = useState(false);
-  const [toast, setToast] = useState<{message:string;type:'success'|'error'}|null>(null);
-  const [showLaunchModal, setShowLaunchModal] = useState(false);
-  const [uploadedFile, setUploadedFile] = useState<File|null>(null);
-  const [customers, setCustomers] = useState<{phone:string;name:string;city:string}[]>([]);
-  const [progress, setProgress] = useState<{sent:number;failed:number;total:number}|null>(null);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<RecipientPreview>({ totalRows: 0, validCount: 0, duplicateCount: 0, invalidCount: 0, recipients: [], duplicates: [], invalid: [] });
+  const [toast, setToast] = useState<ToastState>(null);
+  const [form, setForm] = useState({
+    name: '',
+    description: '',
+    type: 'survey',
+    surveyTemplate: 'default',
+    launchMode: 'immediate',
+    scheduledAt: '',
+    status: 'draft',
+    humanMode: false,
+  });
 
-  // Parse CSV or Excel file using SheetJS
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
     if (!file) return;
-    setUploadedFile(file);
-    setCustomers([]); // reset first
-
     try {
       const rows = await readCustomerFileRows(file);
-
-      if (rows.length < 2) {
-        alert('الملف فارغ أو لا يحتوي على بيانات');
-        return;
-      }
-
-      // Detect column indices from header row
-      const header = rows[0].map(h => String(h).trim());
-      const phoneIdx = header.findIndex(h => h.includes('هاتف') || h.includes('phone') || h.toLowerCase().includes('phone'));
-      const nameIdx  = header.findIndex(h => h.includes('اسم') || h.toLowerCase().includes('name'));
-      const cityIdx  = header.findIndex(h => h.includes('مدين') || h.toLowerCase().includes('city'));
-
-      // Fallback: assume columns A=phone, B=name, C=city if headers not found
-      const pIdx = phoneIdx >= 0 ? phoneIdx : 0;
-      const nIdx = nameIdx  >= 0 ? nameIdx  : 1;
-      const cIdx = cityIdx  >= 0 ? cityIdx  : 2;
-
-      const parsed = rows.slice(1)
-        .map(row => ({
-          phone: normalizeCampaignPhone(row[pIdx]),
-          name:  String(row[nIdx] || '').trim(),
-          city:  String(row[cIdx] || '').trim(),
-        }))
-        .filter(r => r.phone.length >= 9);
-
-      setCustomers(parsed);
-    } catch (err) {
-      alert('تعذّر قراءة الملف — تأكد أنه CSV أو Excel صالح');
-      console.error(err);
+      const analyzed = analyzeCustomerRows(rows);
+      setUploadedFile(file);
+      setPreview(analyzed);
+      setToast({ message: `تم تحليل الملف: ${analyzed.validCount} رقم صالح`, type: analyzed.validCount ? 'success' : 'error' });
+    } catch (error) {
+      setUploadedFile(null);
+      setPreview({ totalRows: 0, validCount: 0, duplicateCount: 0, invalidCount: 0, recipients: [], duplicates: [], invalid: [] });
+      setToast({ message: error instanceof Error ? error.message : 'تعذر قراءة الملف', type: 'error' });
     }
   };
 
-  const handleLaunch = async () => {
-    if (customers.length === 0) {
-      setToast({ message: 'لا يوجد عملاء في الملف المرفوع', type: 'error' });
+  const createPayload = (mode: string) => ({
+    ...form,
+    launchMode: mode,
+    status: mode === 'draft' ? 'draft' : mode === 'schedule' ? 'scheduled' : 'active',
+    campaignId: `campaign_${Date.now()}`,
+    id: `campaign_${Date.now()}`,
+    name: form.name.trim() || 'حملة استبيان جديدة',
+    customers: preview.recipients,
+    scheduledAt: form.scheduledAt || undefined,
+  });
+
+  const saveDraft = async () => {
+    const payload = createPayload('draft');
+    const response = await fetch('/api/admin/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!response.ok) throw new Error('فشل حفظ المسودة');
+    setToast({ message: 'تم حفظ الحملة كمسودة', type: 'success' });
+    setShowModal(false);
+    await refresh();
+  };
+
+  const launchCampaign = async () => {
+    if (!preview.validCount) {
+      setToast({ message: 'لا يوجد مستلمون صالحون للإرسال', type: 'error' });
       return;
     }
-
     setLaunching(true);
-    setShowLaunchModal(false);
-    setProgress({ sent: 0, failed: 0, total: customers.length });
-
     try {
-      const resp = await fetch('/api/campaigns/launch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customers, campaignId: `campaign_${Date.now()}` }),
-      });
-      const data = await resp.json() as { ok: boolean; queued?: number; message?: string; errors?: string[] };
-
-      if (data.ok) {
-        setProgress({ sent: data.queued || customers.length, failed: 0, total: customers.length });
-        setToast({ message: `✅ تم إطلاق الحملة — ${data.queued || customers.length} عميل في قائمة الإرسال`, type: 'success' });
-      } else {
-        const errMsg = data.message || 'فشل إطلاق الحملة';
-        setToast({ message: `❌ ${errMsg}`, type: 'error' });
-      }
-    } catch (err) {
-      setToast({ message: `❌ خطأ في الاتصال بالخادم`, type: 'error' });
+      const payload = createPayload(form.launchMode);
+      const response = await fetch('/api/campaigns/launch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await response.json() as { ok?: boolean; message?: string; queued?: number };
+      if (!response.ok || data.ok === false) throw new Error(data.message || 'فشل إطلاق الحملة');
+      setToast({ message: `تم تشغيل الحملة على ${data.queued || 0} مستلم`, type: 'success' });
+      setShowModal(false);
+      await refresh();
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : 'فشل الإطلاق', type: 'error' });
+    } finally {
+      setLaunching(false);
     }
-
-    setLaunching(false);
-    setProgress(null);
   };
 
   return (
     <div className="page-stack">
-      <PageHeader
-        kicker="Campaign Management"
-        title="إدارة الحملات التسويقية"
-        description="رفع قوائم العملاء، اختيار قالب الاستبيان، وجدولة الإطلاق مع متابعة الاستجابة."
-        action={<div className="action-row"><button className="btn secondary" onClick={downloadCampaignTemplate}><Download size={17} /> تحميل قالب Excel</button><button className="btn primary" onClick={()=>setShowLaunchModal(true)}><Send size={17} /> إطلاق حملة جديدة</button></div>}
-      />
+      <PageHeader kicker="Campaign Management" title="إدارة الحملات" description="إنشاء الحملات، معاينة المستلمين، ثم تشغيل الإرسال من قائمة مؤكدة فقط." action={<div className="action-row"><button className="btn secondary" onClick={downloadCampaignTemplate}><Download size={17} /> قالب فارغ</button><button className="btn primary" onClick={() => setShowModal(true)}><Plus size={17} /> إضافة حملة جديدة</button></div>} />
       <div className="metric-grid four">
-        <MetricCard icon={Megaphone} label="الحملات النشطة" value="12" hint="2 هذا الشهر" />
-        <MetricCard icon={Send} label="الرسائل المرسلة" value="45,820" hint="98% تسليم" tone="blue" />
-        <MetricCard icon={Activity} label="معدل الاستجابة" value="24.5%" hint="آخر 24 ساعة" delta="+1.8%" tone="green" />
-        <MetricCard icon={TrendingUp} label="عائد الاستثمار" value="3.8x" hint="مقارنة بالتكلفة" tone="amber" />
+        <MetricCard icon={Megaphone} label="إجمالي الحملات" value={formatNumber(dashboard.campaignStats?.totalCampaigns || campaigns.length)} hint="من قاعدة البيانات" />
+        <MetricCard icon={PlayCircle} label="النشطة" value={formatNumber(dashboard.campaignStats?.activeCampaigns)} hint="حملات قيد التشغيل" tone="green" />
+        <MetricCard icon={CalendarDays} label="المجدولة" value={formatNumber(dashboard.campaignStats?.scheduledCampaigns)} hint="تنتظر موعد الإطلاق" tone="amber" />
+        <MetricCard icon={Send} label="رسائل مرسلة" value={formatNumber(dashboard.messageStats?.sentMessages)} hint="من سجل WhatsApp" tone="blue" />
       </div>
-      <div className="content-grid two">
-        <Card title="إعداد حملة سريعة" subtitle="رفع قائمة واختيار قالب">
-          <div className="upload-card">
-            {uploadedFile ? (
-              <><CheckCircle2 size={32} color="#0d9488" /><strong>تم رفع الملف بنجاح</strong><span dir="ltr">{uploadedFile.name}</span><span style={{color:'#0d9488',fontWeight:'bold'}}>{customers.length} عميل جاهز للإرسال</span></>
-            ) : (
-              <><UploadCloud size={32} /><strong>رفع قائمة العملاء</strong><span>CSV / Excel — يجب أن يحتوي على: رقم الهاتف، الاسم، المدينة</span></>
-            )}
-            <label className="btn secondary" style={{marginTop:8,cursor:'pointer'}}>
-              <Download size={14} /> اختر ملف
-              <input type="file" hidden accept=".csv,.xlsx" onChange={handleFileChange} />
-            </label>
-            <button className="btn secondary" onClick={downloadCampaignTemplate} style={{marginTop:4}}><Download size={14} /> القالب الفارغ</button>
-          </div>
-          <div className="form-row">
-            <select defaultValue="survey1"><option value="survey1">استبيان رضا المستهلك في صنعاء</option><option value="survey2">تفضيلات الدفع</option></select>
-            <button className="btn secondary"><CalendarDays size={17} /> جدولة</button>
-            <button className="btn primary" onClick={()=>setShowLaunchModal(true)} disabled={!uploadedFile}>معاينة وإطلاق</button>
-          </div>
-        </Card>
-        <Card title="أداء الحملة الزمنية" subtitle="توصيل مقابل استجابات">
-          <div className="chart-md">
-            <SafeResponsiveContainer>
-              <BarChart data={campaignTrend}><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} /><XAxis dataKey="hour" /><YAxis /><Tooltip /><Bar dataKey="sent" name="توصيل الرسائل" fill="#cbd5e1" radius={[6,6,0,0]} isAnimationActive={false} /><Bar dataKey="replies" name="الاستجابات" fill="#0d9488" radius={[6,6,0,0]} isAnimationActive={false} /></BarChart>
-            </SafeResponsiveContainer>
-          </div>
-        </Card>
-      </div>
-      <Card title="الحملات النشطة والمجدولة" subtitle="قائمة تشغيلية">
+      <Card title="الحملات" subtitle={`${campaigns.length} حملة`}>
         <div className="table-wrap">
-          <table><thead><tr><th>اسم الحملة</th><th>المرسل</th><th>الاستجابات</th><th>المعدل</th><th>التكلفة</th><th>الحالة</th></tr></thead>
-          <tbody>{campaigns.map((row) => <tr key={row.name}><td><strong>{row.name}</strong></td><td>{row.sent}</td><td>{row.responses}</td><td>{row.rate}</td><td>{row.spend}</td><td><StatusBadge value={row.status} /></td></tr>)}</tbody></table>
+          <table><thead><tr><th>اسم الحملة</th><th>النوع</th><th>المستلمون</th><th>المكرر</th><th>غير صالح</th><th>الاستجابات</th><th>المعدل</th><th>الحالة</th></tr></thead><tbody>
+            {campaigns.map((campaign) => <tr key={campaign.id}><td><strong>{campaign.name}</strong><span>{campaign.description || campaign.id}</span></td><td>{campaign.type || 'survey'}</td><td>{formatNumber(campaign.validRecipientCount)}</td><td>{formatNumber(campaign.duplicateRecipientCount)}</td><td>{formatNumber(campaign.invalidRecipientCount)}</td><td>{formatNumber(campaign.responseCount)}</td><td>{percent(campaign.responseRate)}</td><td><StatusBadge value={campaign.status} /></td></tr>)}
+          </tbody></table>
+          {!campaigns.length && <EmptyState />}
         </div>
       </Card>
-      <Modal open={showLaunchModal} onClose={()=>setShowLaunchModal(false)} title="تأكيد إطلاق الحملة">
-        <div style={{marginBottom:16}}>
-          <p style={{color:'#64748b',marginBottom:8}}>سيتم إرسال استبيان رضا العملاء إلى <strong style={{color:'#0d9488'}}>{customers.length} عميل</strong> عبر WhatsApp.</p>
-          {customers.length > 0 && (
-            <div style={{background:'#f8fafc',borderRadius:8,padding:'8px 12px',maxHeight:140,overflowY:'auto',fontSize:12}}>
-              {customers.slice(0,5).map((c,i) => (
-                <div key={i} style={{padding:'3px 0',borderBottom:'1px solid #e2e8f0',display:'flex',gap:12}}>
-                  <span dir="ltr" style={{color:'#64748b'}}>{c.phone}</span>
-                  <span>{c.name}</span>
-                  <span style={{color:'#94a3b8'}}>{c.city}</span>
-                </div>
-              ))}
-              {customers.length > 5 && <div style={{color:'#94a3b8',paddingTop:4}}>و {customers.length - 5} آخرين...</div>}
-            </div>
-          )}
-          <p style={{marginTop:10,fontSize:12,color:'#f59e0b'}}>⚠️ سيتم الإرسال بفاصل 2-4 ثوانٍ بين كل رسالة لتجنب الحظر.</p>
-        </div>
-        <div className="action-row" style={{justifyContent:'flex-end'}}>
-          <button className="btn secondary" onClick={()=>setShowLaunchModal(false)}>إلغاء</button>
-          <button className="btn primary" onClick={handleLaunch} disabled={launching || customers.length === 0}>{launching?'⏳ جاري الإطلاق...':'🚀 إطلاق الحملة'}</button>
+      <Modal open={showModal} onClose={() => setShowModal(false)} title="إضافة حملة جديدة">
+        <div className="campaign-modal-grid">
+          <label><span>اسم الحملة</span><input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
+          <label><span>نوع الحملة</span><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })}><option value="survey">استبيان</option><option value="reactivation">إعادة تنشيط</option><option value="research">بحث سوقي</option></select></label>
+          <label className="span-full"><span>وصف الحملة</span><textarea rows={3} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label>
+          <label><span>قالب الاستبيان</span><select value={form.surveyTemplate} onChange={(event) => setForm({ ...form, surveyTemplate: event.target.value })}><option value="default">الاستبيان الرئيسي</option><option value="payment">تفضيلات الدفع</option><option value="delivery">تجربة التوصيل</option></select></label>
+          <label><span>وقت الإطلاق</span><input type="datetime-local" value={form.scheduledAt} onChange={(event) => setForm({ ...form, scheduledAt: event.target.value })} /></label>
+          <label><span>طريقة التشغيل</span><select value={form.launchMode} onChange={(event) => setForm({ ...form, launchMode: event.target.value })}><option value="immediate">تشغيل فوري</option><option value="schedule">جدولة</option><option value="draft">حفظ كمسودة</option></select></label>
+          <label><span>الحالة</span><select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}><option value="draft">مسودة</option><option value="active">نشطة</option><option value="scheduled">مجدولة</option></select></label>
+          <label className="toggle-chip span-full"><span>وضع المحادثة البشرية لهذه الحملة</span><input type="checkbox" checked={form.humanMode} onChange={(event) => setForm({ ...form, humanMode: event.target.checked })} /></label>
+          <div className="upload-card span-full">
+            <UploadCloud size={30} />
+            <strong>{uploadedFile ? uploadedFile.name : 'رفع ملف العملاء'}</strong>
+            <span>CSV / Excel. لن يتم إرسال أي رقم غير موجود في الملف.</span>
+            <label className="btn secondary"><UploadCloud size={15} /> اختر ملف<input type="file" hidden accept=".csv,.xlsx" onChange={handleFileChange} /></label>
+          </div>
+          <RecipientPreviewPanel preview={preview} />
+          <div className="action-row span-full modal-actions">
+            <button className="btn secondary" onClick={() => setShowModal(false)}>إلغاء</button>
+            <button className="btn secondary" onClick={() => void saveDraft()}><Save size={16} /> حفظ كمسودة</button>
+            <button className="btn primary" disabled={launching || !preview.validCount} onClick={() => void launchCampaign()}><Send size={16} /> {launching ? 'جاري التشغيل' : 'تشغيل الحملة'}</button>
+          </div>
         </div>
       </Modal>
-      {/* Progress indicator while sending */}
-      {progress && (
-        <div style={{position:'fixed',bottom:24,left:'50%',transform:'translateX(-50%)',background:'#1e293b',color:'white',borderRadius:12,padding:'12px 24px',zIndex:9999,display:'flex',gap:16,alignItems:'center',boxShadow:'0 8px 32px rgba(0,0,0,0.3)'}}>
-          <div style={{width:120,height:6,background:'#334155',borderRadius:3}}>
-            <div style={{width:`${(progress.sent+progress.failed)/progress.total*100}%`,height:'100%',background:'#0d9488',borderRadius:3,transition:'width 0.3s'}} />
-          </div>
-          <span style={{fontSize:13}}>إرسال {progress.sent + progress.failed} / {progress.total}</span>
-          {progress.failed > 0 && <span style={{color:'#f87171',fontSize:12}}>{progress.failed} فشل</span>}
-        </div>
-      )}
-      {toast && <Toast message={toast.message} type={toast.type} onClose={()=>setToast(null)}/>}
+      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+    </div>
+  );
+}
+
+function RecipientPreviewPanel({ preview }: { preview: RecipientPreview }) {
+  return (
+    <div className="recipient-preview span-full">
+      <div className="preview-metrics">
+        <strong>{preview.validCount}</strong><span>سيتم الإرسال لهم فعلياً</span>
+        <strong>{preview.duplicateCount}</strong><span>مكرر</span>
+        <strong>{preview.invalidCount}</strong><span>غير صالح</span>
+      </div>
+      <div className="recipient-lists">
+        <div><h4>الأرقام الصالحة</h4>{preview.recipients.slice(0, 80).map((recipient) => <p key={recipient.phone}><span dir="ltr">{recipient.phone}</span><em>{recipient.name || 'بدون اسم'}</em></p>)}{!preview.recipients.length && <small>لا يوجد</small>}</div>
+        <div><h4>المكررة</h4>{preview.duplicates.slice(0, 40).map((item) => <p key={`${item.phone}-${item.row}`}><span dir="ltr">{item.phone}</span><em>صف {item.row} مكرر لصف {item.firstRow}</em></p>)}{!preview.duplicates.length && <small>لا يوجد</small>}</div>
+        <div><h4>غير الصالحة</h4>{preview.invalid.slice(0, 40).map((item) => <p key={`${item.rawPhone}-${item.row}`}><span>{item.rawPhone || 'فارغ'}</span><em>صف {item.row}</em></p>)}{!preview.invalid.length && <small>لا يوجد</small>}</div>
+      </div>
     </div>
   );
 }
 
 function SettingsPage() {
-  const [profile, setProfile] = useState({ name: 'أحمد محمد سالم', email: 'ahmed@linker-intelligence.com', org: 'لينكر ماركت للأبحاث', lang: 'العربية (Yemen)' });
   const [waba, setWaba] = useState({ provider: 'custom', apiUrl: 'https://gate.whapi.cloud/', apiKey: '', phoneId: '', businessId: '', webhookToken: '' });
-  const [webhookUrl, setWebhookUrl] = useState('https://linker-agent.com/api/integrations/survey-agent/webhook');
-  const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState<{message:string;type:'success'|'error'}|null>(null);
-
-  const handleSaveAll = () => {
-    setSaving(true);
-    fetch('/api/admin/settings/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile, waba, webhookUrl }),
-    }).then(async r => {
-      const data = await r.json().catch(() => ({} as Record<string, unknown>));
-      if (!r.ok || data?.ok === false) throw new Error((data?.message as string) || 'save failed');
-      return data;
-    }).then(() => {
-      setSaving(false);
-      setToast({ message: 'تم حفظ جميع الإعدادات بنجاح ✅', type: 'success' });
-    }).catch((error) => {
-      setSaving(false);
-      setToast({ message: `فشل حفظ الإعدادات: ${error instanceof Error ? error.message : 'خطأ غير معروف'}`, type: 'error' });
-    });
+  const [webhookUrl, setWebhookUrl] = useState('/api/integrations/survey-agent/webhook');
+  const [toast, setToast] = useState<ToastState>(null);
+  const save = async () => {
+    const response = await fetch('/api/admin/settings/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ waba, webhookUrl }) });
+    setToast({ message: response.ok ? 'تم حفظ الإعدادات' : 'فشل حفظ الإعدادات', type: response.ok ? 'success' : 'error' });
   };
-
-  const handleTestConnection = async () => {
-    setToast({ message: 'جاري اختبار الاتصال بمزود WhatsApp API...', type: 'success' });
-    try {
-      const r = await fetch('/api/admin/settings/test-whatsapp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: waba.provider, apiUrl: waba.apiUrl, apiKey: waba.apiKey }),
-      });
-      const text = await r.text();
-      let data: Record<string, unknown> = {};
-      try { data = JSON.parse(text); } catch { 
-        // Server returned non-JSON (HTML error page or crash)
-        setToast({ message: `❌ خطأ في الخادم (${r.status}) — ${text.slice(0, 120)}`, type: 'error' });
-        return;
-      }
-      const baseMessage = (data?.message as string) || (data?.ok ? '✅ تم الاتصال بنجاح' : '❌ فشل الاتصال — تحقق من بيانات الربط');
-      setToast({ message: baseMessage, type: data?.ok ? 'success' : 'error' });
-    } catch (err) {
-      setToast({ message: `❌ تعذّر الوصول للخادم — ${err instanceof Error ? err.message : 'network error'}`, type: 'error' });
-    }
+  const test = async () => {
+    const response = await fetch('/api/admin/settings/test-whatsapp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: waba.provider, apiUrl: waba.apiUrl, apiKey: waba.apiKey }) });
+    const data = await response.json().catch(() => ({ message: 'تعذر قراءة الرد' })) as { message?: string };
+    setToast({ message: data.message || (response.ok ? 'تم الاتصال' : 'فشل الاتصال'), type: response.ok ? 'success' : 'error' });
   };
 
   return (
     <div className="page-stack">
-      <PageHeader
-        kicker="Settings"
-        title="الإعدادات والربط التقني"
-        description="إدارة المفاتيح، مزود WhatsApp API، Webhooks، وصلاحيات الفريق."
-        action={<button className="btn primary" onClick={handleSaveAll} disabled={saving}>{saving ? '⏳ جاري الحفظ...' : <><ShieldCheck size={17} /> حفظ جميع الإعدادات</>}</button>}
-      />
-      <div className="content-grid two">
-        <Card title="الملف والمنظمة" subtitle="بيانات النظام">
-          <div className="question-grid">
-            <label><span>اسم المستخدم الكامل</span><input value={profile.name} onChange={e => setProfile({...profile,name:e.target.value})} /></label>
-            <label><span>البريد الإلكتروني</span><input value={profile.email} onChange={e => setProfile({...profile,email:e.target.value})} /></label>
-            <label><span>اسم المنظمة</span><input value={profile.org} onChange={e => setProfile({...profile,org:e.target.value})} /></label>
-            <label><span>لغة الواجهة</span><select value={profile.lang} onChange={e => setProfile({...profile,lang:e.target.value})}><option>العربية (Yemen)</option><option>English</option></select></label>
-          </div>
-        </Card>
-        <Card title="Webhook الرابط" subtitle="رابط استقبال رسائل واتساب">
-          <div className="question-grid">
-            <label><span>رابط Webhook URL</span><input value={webhookUrl} onChange={e => setWebhookUrl(e.target.value)} dir="ltr" style={{fontFamily:'monospace',fontSize:12}} /></label>
-            <label><span>رمز التحقق (Verify Token)</span><input value={waba.webhookToken} onChange={e => setWaba({...waba,webhookToken:e.target.value})} type="password" dir="ltr" /></label>
-            <div style={{display:'flex',alignItems:'flex-end',gap:8}}>
-              <div style={{flex:1}}><label><span>حالة الربط</span></label><div style={{padding:12,background:'#f0fdf4',borderRadius:8,display:'flex',alignItems:'center',gap:8}}><CheckCircle2 size={18} color="#16a34a"/><span style={{color:'#16a34a',fontWeight:600}}>جاهز للاستقبال</span></div></div>
-            </div>
-          </div>
-        </Card>
-      </div>
-      <Card title="مزود خدمة WhatsApp API" subtitle="إعدادات مزود خدمة واتساب للأعمال">
+      <PageHeader kicker="Settings" title="الإعدادات والربط التقني" description="إدارة مزود WhatsApp والـ Webhook بدون بيانات تجريبية." action={<button className="btn primary" onClick={() => void save()}><ShieldCheck size={17} /> حفظ</button>} />
+      <Card title="مزود WhatsApp API" subtitle="بيانات الربط">
         <div className="question-grid">
-          <label>
-            <span>مزود الخدمة</span>
-            <select value={waba.provider} onChange={e => setWaba({...waba,provider:e.target.value})}>
-              <option value="meta">Meta Cloud API (WhatsApp Business Platform)</option>
-              <option value="twilio">Twilio for WhatsApp</option>
-              <option value="messagebird">MessageBird</option>
-              <option value="infobip">Infobip</option>
-              <option value="wati">WATI</option>
-              <option value="custom">مزود مخصص (Custom API)</option>
-            </select>
-          </label>
-          <label>
-            <span>API Key / Access Token</span>
-            <input value={waba.apiKey} onChange={e => setWaba({...waba,apiKey:e.target.value})} type="password" placeholder="EAAx..." dir="ltr" style={{fontFamily:'monospace',fontSize:12}} />
-          </label>
-          <label>
-            <span>API URL</span>
-            <input value={waba.apiUrl} onChange={e => setWaba({...waba,apiUrl:e.target.value})} placeholder="https://gate.whapi.cloud/" dir="ltr" style={{fontFamily:'monospace',fontSize:12}} />
-          </label>
-          <label>
-            <span>Phone Number ID</span>
-            <input value={waba.phoneId} onChange={e => setWaba({...waba,phoneId:e.target.value})} placeholder="123456789..." dir="ltr" style={{fontFamily:'monospace',fontSize:12}} />
-          </label>
-          <label>
-            <span>WhatsApp Business Account ID</span>
-            <input value={waba.businessId} onChange={e => setWaba({...waba,businessId:e.target.value})} placeholder="987654321..." dir="ltr" style={{fontFamily:'monospace',fontSize:12}} />
-          </label>
+          <label><span>مزود الخدمة</span><select value={waba.provider} onChange={(event) => setWaba({ ...waba, provider: event.target.value })}><option value="custom">مزود مخصص</option><option value="meta">Meta Cloud API</option><option value="twilio">Twilio</option></select></label>
+          <label><span>API URL</span><input value={waba.apiUrl} onChange={(event) => setWaba({ ...waba, apiUrl: event.target.value })} dir="ltr" /></label>
+          <label><span>API Token</span><input value={waba.apiKey} onChange={(event) => setWaba({ ...waba, apiKey: event.target.value })} type="password" dir="ltr" /></label>
+          <label><span>Webhook URL</span><input value={webhookUrl} onChange={(event) => setWebhookUrl(event.target.value)} dir="ltr" /></label>
+          <label><span>Phone Number ID</span><input value={waba.phoneId} onChange={(event) => setWaba({ ...waba, phoneId: event.target.value })} dir="ltr" /></label>
+          <label><span>Business Account ID</span><input value={waba.businessId} onChange={(event) => setWaba({ ...waba, businessId: event.target.value })} dir="ltr" /></label>
         </div>
-        <div className="action-row" style={{marginTop:16}}>
-          <button className="btn secondary" onClick={handleTestConnection}>🔗 اختبار الاتصال</button>
-          <div style={{display:'flex',alignItems:'center',gap:8,padding:'8px 14px',borderRadius:8,background:waba.apiKey?'#f0fdf4':'#fef2f2',border:`1px solid ${waba.apiKey?'#bbf7d0':'#fecaca'}`}}>
-            {waba.apiKey ? <><CheckCircle2 size={16} color="#16a34a"/><span style={{fontSize:13,color:'#16a34a'}}>تم إدخال بيانات المزود</span></> : <><span style={{fontSize:13,color:'#dc2626'}}>⚠️ لم يتم إدخال API Key بعد</span></>}
-          </div>
-        </div>
+        <div className="action-row form-actions"><button className="btn secondary" onClick={() => void test()}><Activity size={17} /> اختبار الاتصال</button></div>
       </Card>
-      {toast && <Toast message={toast.message} type={toast.type} onClose={()=>setToast(null)}/>}
+      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+    </div>
+  );
+}
+
+function Modal({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: ReactNode }) {
+  if (!open) return null;
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <div className="modal-card" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="modal-head">
+          <h3>{title}</h3>
+          <button className="icon-btn" onClick={onClose} aria-label="إغلاق"><X size={18} /></button>
+        </div>
+        {children}
+      </div>
     </div>
   );
 }
 
 export default App;
-
-

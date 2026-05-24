@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { captureAnswer, createConversationEngine, type SessionData } from './conversationEngine';
+import { captureAnswer, createConversationEngine, resetSurveyConfig, updateSurveyConfig, type SessionData } from './conversationEngine';
 import type { CompleteSurveyArgs, SurveyResponseData } from './marketIntelligenceStore';
 
 test('conversation engine captures and completes a broker survey', async () => {
@@ -95,4 +95,31 @@ test('conversation engine returns null when no conversation is active', async ()
   });
 
   assert.equal(await engine.handleIncomingMessage('777000000', 'مرحبا'), null);
+});
+
+test('multi-select numeric answers are normalized to selected labels', () => {
+  const data: SurveyResponseData = {};
+  captureAnswer('ASK_DIRECT_ENCOURAGEMENT', '1، 2, 3', data);
+  assert.equal(data.directEncouragement, 'الدفع عند الاستلام، سرعة التوصيل، تتبع واضح');
+});
+
+test('saved question config changes rendered question type and options', () => {
+  try {
+    updateSurveyConfig({
+      questions: [{
+        id: 'ASK_DIRECT_ENCOURAGEMENT',
+        label: 'محفزات الطلب',
+        text: 'اختر محفزاتك',
+        key: 'directEncouragement',
+        type: 'multi_select',
+        options: ['الدفع عند الاستلام', 'سرعة التوصيل'],
+      }],
+    });
+
+    const data: SurveyResponseData = {};
+    captureAnswer('ASK_DIRECT_ENCOURAGEMENT', '1, 2', data);
+    assert.equal(data.directEncouragement, 'الدفع عند الاستلام، سرعة التوصيل');
+  } finally {
+    resetSurveyConfig();
+  }
 });

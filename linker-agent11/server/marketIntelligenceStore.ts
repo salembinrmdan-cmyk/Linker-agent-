@@ -36,6 +36,29 @@ export interface CustomerProfile {
   city?: string;
 }
 
+export interface CampaignRecipientRecord {
+  phone: string;
+  name?: string;
+  city?: string;
+}
+
+export interface CampaignWriteInput {
+  id?: string;
+  name: string;
+  description?: string;
+  type?: string;
+  surveyTemplate?: string;
+  launchMode?: string;
+  status?: string;
+  scheduledAt?: string | Date | null;
+  humanMode?: boolean;
+  settings?: Record<string, unknown>;
+  recipientCount?: number;
+  validRecipientCount?: number;
+  duplicateRecipientCount?: number;
+  invalidRecipientCount?: number;
+}
+
 export interface CompleteSurveyArgs {
   campaignId: string;
   customerId: string;
@@ -137,6 +160,27 @@ interface CompletedResponse {
   customer: { id: string; phone: string; name: string | null; city: string | null };
 }
 
+interface CampaignWithCounts {
+  id: string;
+  name: string;
+  description: string | null;
+  type: string;
+  surveyTemplate: string | null;
+  launchMode: string;
+  status: string;
+  scheduledAt: Date | null;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  recipientCount: number;
+  validRecipientCount: number;
+  duplicateRecipientCount: number;
+  invalidRecipientCount: number;
+  humanMode: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  _count: { responses: number; recipients: number };
+}
+
 interface CountDatum {
   name: string;
   value: number;
@@ -182,6 +226,12 @@ function pickResponseData(data: SurveyResponseData): SurveyResponseFieldData {
   };
 }
 
+function normalizeCampaignDate(value: string | Date | null | undefined) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 function ratio(part: number, total: number) {
   return total > 0 ? Math.round((part / total) * 100) : 0;
 }
@@ -215,6 +265,33 @@ function isPositiveDirectProbability(value: string | null) {
   }
 
   return ['أكيد', 'غالب', 'احتمال كبير', '1', '2'].some((keyword) => value.includes(keyword));
+}
+
+function mapCampaign(campaign: CampaignWithCounts) {
+  const responseCount = campaign._count.responses;
+  const sentCount = campaign.validRecipientCount || campaign._count.recipients || campaign.recipientCount;
+  return {
+    id: campaign.id,
+    name: campaign.name,
+    description: campaign.description,
+    type: campaign.type,
+    surveyTemplate: campaign.surveyTemplate,
+    launchMode: campaign.launchMode,
+    status: campaign.status,
+    scheduledAt: campaign.scheduledAt,
+    startedAt: campaign.startedAt,
+    completedAt: campaign.completedAt,
+    recipientCount: campaign.recipientCount,
+    validRecipientCount: campaign.validRecipientCount,
+    duplicateRecipientCount: campaign.duplicateRecipientCount,
+    invalidRecipientCount: campaign.invalidRecipientCount,
+    humanMode: campaign.humanMode,
+    sentCount,
+    responseCount,
+    responseRate: ratio(responseCount, sentCount),
+    createdAt: campaign.createdAt,
+    updatedAt: campaign.updatedAt,
+  };
 }
 
 async function getCompletedResponses(): Promise<CompletedResponse[]> {
@@ -338,13 +415,135 @@ export const MarketIntelligenceStore = {
   async ensureCampaign(campaignId: string, name = DEFAULT_CAMPAIGN_NAME) {
     return prisma.surveyCampaign.upsert({
       where: { id: campaignId },
-      update: { status: 'active' },
+      update: {
+        status: 'active',
+        startedAt: new Date(),
+      },
       create: {
         id: campaignId,
         name,
         status: 'active',
+        launchMode: 'immediate',
+        startedAt: new Date(),
       },
     });
+  },
+
+  async createCampaign(input: CampaignWriteInput) {
+    const campaignId = input.id || `campaign_${Date.now()}`;
+    const settings = input.settings ? JSON.parse(JSON.stringify(input.settings)) : {};
+    const scheduledAt = normalizeCampaignDate(input.scheduledAt);
+
+    return prisma.surveyCampaign.upsert({
+      where: { id: campaignId },
+      update: {
+        name: input.name,
+        description: input.description,
+        type: input.type || 'survey',
+        surveyTemplate: input.surveyTemplate,
+        launchMode: input.launchMode || 'draft',
+        status: input.status || 'draft',
+        scheduledAt,
+        humanMode: Boolean(input.humanMode),
+        settings,
+        recipientCount: input.recipientCount ?? 0,
+        validRecipientCount: input.validRecipientCount ?? 0,
+        duplicateRecipientCount: input.duplicateRecipientCount ?? 0,
+        invalidRecipientCount: input.invalidRecipientCount ?? 0,
+      },
+      create: {
+        id: campaignId,
+        name: input.name,
+        description: input.description,
+        type: input.type || 'survey',
+        surveyTemplate: input.surveyTemplate,
+        launchMode: input.launchMode || 'draft',
+        status: input.status || 'draft',
+        scheduledAt,
+        humanMode: Boolean(input.humanMode),
+        settings,
+        recipientCount: input.recipientCount ?? 0,
+        validRecipientCount: input.validRecipientCount ?? 0,
+        duplicateRecipientCount: input.duplicateRecipientCount ?? 0,
+        invalidRecipientCount: input.invalidRecipientCount ?? 0,
+      },
+    });
+  },
+
+  async replaceCampaignRecipients(
+    campaignId: string,
+    recipients: CampaignRecipientRecord[],
+    stats: { totalRows: number; duplicateCount: number; invalidCount: number },
+  ) {
+    const cleanRecipients = recipients.map((recipient) => ({
+      campaignId,
+      phone: recipient.phone,
+      name: recipient.name?.trim() || null,
+      city: recipient.city?.trim() || null,
+      status: 'pending',
+    }));
+
+    await prisma.$transaction([
+      prisma.campaignRecipient.deleteMany({ where: { campaignId } }),
+      ...(cleanRecipients.length
+        ? [prisma.campaignRecipient.createMany({ data: cleanRecipients, skipDuplicates: true })]
+        : []),
+      prisma.surveyCampaign.update({
+        where: { id: campaignId },
+        data: {
+          recipientCount: stats.totalRows,
+          validRecipientCount: cleanRecipients.length,
+          duplicateRecipientCount: stats.duplicateCount,
+          invalidRecipientCount: stats.invalidCount,
+        },
+      }),
+    ]);
+  },
+
+  async markCampaignRecipientStatus(campaignId: string, phone: string, status: string, error?: string) {
+    try {
+      return await prisma.campaignRecipient.update({
+        where: { campaignId_phone: { campaignId, phone } },
+        data: {
+          status,
+          error,
+          sentAt: status === 'sent' ? new Date() : undefined,
+        },
+      });
+    } catch (error_) {
+      console.warn('[campaign-recipient-status-failed]', { campaignId, phone, status, error: error_ });
+      return null;
+    }
+  },
+
+  async markCampaignStatus(campaignId: string, status: string) {
+    const timestamp =
+      status === 'active'
+        ? { startedAt: new Date() }
+        : status === 'completed'
+          ? { completedAt: new Date() }
+          : {};
+
+    return prisma.surveyCampaign.update({
+      where: { id: campaignId },
+      data: { status, ...timestamp },
+    });
+  },
+
+  async listCampaigns() {
+    const campaigns = await prisma.surveyCampaign.findMany({
+      orderBy: { updatedAt: 'desc' },
+      include: {
+        _count: {
+          select: {
+            responses: true,
+            recipients: true,
+          },
+        },
+      },
+    });
+
+    return (campaigns as CampaignWithCounts[]).map(mapCampaign);
   },
 
   async upsertCustomer(phone: string, profile: CustomerProfile = {}) {
@@ -367,6 +566,7 @@ export const MarketIntelligenceStore = {
   async prepareSurveySession(phone: string, campaignId: string, profile: CustomerProfile = {}): Promise<SurveySession> {
     await this.ensureCampaign(campaignId);
     const customer = await this.upsertCustomer(phone, profile);
+    await prisma.surveySession.deleteMany({ where: { phone } });
 
     return { customerId: customer.id };
   },
@@ -551,6 +751,21 @@ export const MarketIntelligenceStore = {
     })) as { type: string | null; channel: string | null; gender: string | null }[];
 
     const topBrokers = allBrokers.slice(0, 5);
+    const [
+      totalCampaigns,
+      activeCampaigns,
+      scheduledCampaigns,
+      sentMessages,
+      failedMessages,
+      inboundMessages,
+    ] = await Promise.all([
+      prisma.surveyCampaign.count(),
+      prisma.surveyCampaign.count({ where: { status: 'active' } }),
+      prisma.surveyCampaign.count({ where: { status: 'scheduled' } }),
+      prisma.whatsappMessage.count({ where: { direction: 'outbound', status: 'sent' } }),
+      prisma.whatsappMessage.count({ where: { direction: 'outbound', status: 'failed' } }),
+      prisma.whatsappMessage.count({ where: { direction: 'inbound', status: 'received' } }),
+    ]);
 
     return {
       totalResponses,
@@ -566,9 +781,23 @@ export const MarketIntelligenceStore = {
       purchaseMethodBreakdown: countBy(completedResponses, (response) => response.purchaseMethod),
       ageGroupBreakdown: countBy(completedResponses, (response) => response.ageGroup),
       genderBreakdown: countBy(completedResponses, (response) => response.gender),
+      frequencyBreakdown: countBy(completedResponses, (response) => response.purchaseFrequency),
+      directEncouragementBreakdown: countBy(completedResponses, (response) => response.directEncouragement),
       brokerTypeBreakdown: countBy(allBrokers, (b) => b.type),
       brokerChannelBreakdown: countBy(allBrokers, (b) => b.channel),
       brokerGenderBreakdown: countBy(allBrokers.filter((b) => b.gender && b.gender !== 'unknown'), (b) => b.gender),
+      campaignStats: {
+        totalCampaigns,
+        activeCampaigns,
+        scheduledCampaigns,
+      },
+      messageStats: {
+        sentMessages,
+        failedMessages,
+        inboundMessages,
+        deliveryRatio: ratio(sentMessages, sentMessages + failedMessages),
+        replyRatio: ratio(inboundMessages, sentMessages),
+      },
     };
   },
 
@@ -593,6 +822,7 @@ export const MarketIntelligenceStore = {
         purchaseMethods: metrics.purchaseMethodBreakdown,
         ageGroups: metrics.ageGroupBreakdown,
         genders: metrics.genderBreakdown,
+        frequencies: metrics.frequencyBreakdown,
       },
       cities: {
         activity: metrics.cityBreakdown,
@@ -600,6 +830,11 @@ export const MarketIntelligenceStore = {
       problems: {
         mainProblems: metrics.problemBreakdown,
       },
+      opportunities: {
+        directEncouragement: metrics.directEncouragementBreakdown,
+      },
+      campaigns: metrics.campaignStats,
+      messages: metrics.messageStats,
     };
   },
 
@@ -682,7 +917,14 @@ export const MarketIntelligenceStore = {
     if (existing) {
       return prisma.surveySession.update({
         where: { id: existing.id },
-        data: { currentState: data.currentState, extractedData: jsonData, rawLogs: jsonLogs },
+        data: {
+          phone: data.phone,
+          campaignId: data.campaignId,
+          customerId: data.customerId,
+          currentState: data.currentState,
+          extractedData: jsonData,
+          rawLogs: jsonLogs,
+        },
       });
     }
     return prisma.surveySession.create({

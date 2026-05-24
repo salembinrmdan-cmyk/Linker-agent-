@@ -59,6 +59,26 @@ export interface SessionData {
 export interface SurveyConfig {
   humanMode: boolean;
   messages: Partial<Record<SurveyState, string>>;
+  questions?: SurveyQuestionConfig[];
+}
+
+export type QuestionType =
+  | 'single_select'
+  | 'multi_select'
+  | 'open_text'
+  | 'quick_buttons'
+  | 'interactive_list'
+  | 'text_input'
+  | 'rating'
+  | 'yes_no';
+
+export interface SurveyQuestionConfig {
+  id: SurveyState | string;
+  label?: string;
+  text: string;
+  options?: string[];
+  key?: string;
+  type?: QuestionType;
 }
 
 interface ChatLogEntry {
@@ -124,8 +144,53 @@ export const systemMessages = {
     'أهلين 👋\nحالياً نعمل تحديث جديد لدراسة التسوق الإلكتروني داخل اليمن، وحابين نأخذ رأيك السريع إذا عندك دقيقة 🌷',
 };
 
+const defaultQuestionTypes: Partial<Record<SurveyState, QuestionType>> = {
+  ASK_PLATFORMS: 'multi_select',
+  ASK_PURCHASE_METHOD: 'interactive_list',
+  ASK_BROKER_SOURCE: 'interactive_list',
+  ASK_BROKER_CHANNEL: 'interactive_list',
+  ASK_BROKER_REASON: 'interactive_list',
+  ASK_DELIVERY_TIME: 'interactive_list',
+  ASK_HAS_COD: 'yes_no',
+  ASK_HAS_PROBLEMS: 'yes_no',
+  ASK_MAIN_PROBLEM: 'interactive_list',
+  ASK_ORDER_VALUE: 'interactive_list',
+  ASK_FREQUENCY: 'interactive_list',
+  ASK_AGE: 'interactive_list',
+  ASK_GENDER: 'yes_no',
+  ASK_PAYMENT_METHOD: 'interactive_list',
+  ASK_CANCELED_BEFORE: 'yes_no',
+  ASK_CANCEL_REASON: 'interactive_list',
+  ASK_BIGGEST_ANNOYANCE: 'multi_select',
+  ASK_DIRECT_PROBABILITY: 'quick_buttons',
+  ASK_DIRECT_ENCOURAGEMENT: 'multi_select',
+};
+
+const defaultQuestionOptions: Partial<Record<SurveyState, string[]>> = {
+  ASK_PLATFORMS: ['شي إن', 'نون', 'أمازون', 'علي إكسبريس', 'تيمو', 'آي هيرب', 'نايس ون', 'متاجر إنستغرام', 'مواقع أو تطبيقات أخرى'],
+  ASK_PURCHASE_METHOD: ['أطلب بنفسي مباشرة من الموقع', 'أطلب عبر وسيط أو مندوب', 'أحياناً مباشرة وأحياناً عبر وسيط', 'أشتري من متجر محلي يعرض المنتجات'],
+  ASK_BROKER_SOURCE: ['إنستغرام', 'واتساب', 'تيك توك', 'تيليجرام', 'صديق أو معرفة', 'متجر محلي', 'إعلان'],
+  ASK_BROKER_CHANNEL: ['إنستغرام', 'واتساب', 'تيك توك', 'تيليجرام', 'متجر فعلي', 'مكان آخر'],
+  ASK_BROKER_REASON: ['ما عندي وسيلة دفع إلكترونية', 'ما أعرف طريقة الطلب', 'الوسيط أسهل وأسرع', 'أثق بالوسيط أكثر', 'يوفر الدفع عند الاستلام', 'يساعد في الشحن والجمارك', 'يوفر تجميع الطلبات', 'أقدر أتواصل معه بسهولة'],
+  ASK_DELIVERY_TIME: ['أقل من أسبوعين', 'من أسبوعين إلى شهر', 'أكثر من شهر', 'تختلف حسب الطلب'],
+  ASK_HAS_COD: ['نعم', 'لا', 'أحياناً'],
+  ASK_HAS_PROBLEMS: ['نعم', 'لا'],
+  ASK_MAIN_PROBLEM: ['تأخير الطلب', 'ارتفاع الشحن', 'المنتج مختلف', 'ضعف التتبع', 'صعوبة التواصل', 'مشكلة في المقاس', 'مشكلة بالدفع', 'مشكلة بالاستلام', 'أخرى'],
+  ASK_ORDER_VALUE: ['أقل من 10 ألف', 'من 10 ألف إلى 25 ألف', 'من 25 ألف إلى 50 ألف', 'من 50 ألف إلى 100 ألف', 'أكثر من 100 ألف'],
+  ASK_FREQUENCY: ['أسبوعياً', 'مرتين بالشهر', 'شهرياً', 'كل عدة أشهر', 'فقط بالمواسم'],
+  ASK_AGE: ['أقل من 18', '18 - 24', '25 - 34', '35 - 44', 'أكثر من 45'],
+  ASK_GENDER: ['ذكر', 'أنثى'],
+  ASK_PAYMENT_METHOD: ['الدفع عند الاستلام', 'تحويل', 'محفظة إلكترونية', 'بطاقة بنكية'],
+  ASK_CANCELED_BEFORE: ['نعم', 'لا'],
+  ASK_CANCEL_REASON: ['تأخير', 'تغير السعر', 'غيرت رأيي', 'ضعف التواصل', 'فقدت الثقة', 'تكلفة الشحن', 'سبب آخر'],
+  ASK_BIGGEST_ANNOYANCE: ['التأخير', 'ارتفاع تكلفة الشحن', 'عدم وجود دفع عند الاستلام', 'ضعف الثقة', 'صعوبة المرتجعات', 'اختلاف المنتج', 'ضعف التتبع', 'عدم وضوح السعر النهائي', 'ضعف التواصل', 'مشاكل الجمارك أو الرسوم'],
+  ASK_DIRECT_PROBABILITY: ['أكيد', 'غالباً', 'ممكن', 'لا'],
+  ASK_DIRECT_ENCOURAGEMENT: ['الدفع عند الاستلام', 'سرعة التوصيل', 'تتبع واضح', 'أسعار أفضل', 'ضمان واسترجاع', 'ثقة أكبر'],
+};
+
 let activeMessages: Record<SurveyState, string> = { ...defaultMessages };
-let surveyConfig: SurveyConfig = { humanMode: false, messages: {} };
+let activeQuestions: SurveyQuestionConfig[] = [];
+let surveyConfig: SurveyConfig = { humanMode: false, messages: {}, questions: [] };
 
 export function updateSurveyConfig(config: Partial<SurveyConfig>) {
   if (config.humanMode !== undefined) surveyConfig.humanMode = config.humanMode;
@@ -133,16 +198,29 @@ export function updateSurveyConfig(config: Partial<SurveyConfig>) {
     surveyConfig.messages = { ...surveyConfig.messages, ...config.messages };
     activeMessages = { ...defaultMessages, ...surveyConfig.messages };
   }
+  if (Array.isArray(config.questions)) {
+    activeQuestions = config.questions
+      .filter((question) => typeof question?.id === 'string' && typeof question?.text === 'string')
+      .map((question) => ({
+        ...question,
+        text: question.text.trim(),
+        options: Array.isArray(question.options)
+          ? question.options.map((option) => String(option).trim()).filter(Boolean)
+          : [],
+      }));
+    surveyConfig.questions = activeQuestions;
+  }
   return getSurveyConfig();
 }
 
 export function getSurveyConfig() {
-  return { ...surveyConfig, defaultMessages, systemMessages };
+  return { ...surveyConfig, questions: activeQuestions, defaultMessages, systemMessages, defaultQuestionTypes, defaultQuestionOptions };
 }
 
 export function resetSurveyConfig() {
-  surveyConfig = { humanMode: false, messages: {} };
+  surveyConfig = { humanMode: false, messages: {}, questions: [] };
   activeMessages = { ...defaultMessages };
+  activeQuestions = [];
 }
 
 function getHumanModeMessages(state: SurveyState): string {
@@ -182,6 +260,82 @@ function getHumanModeMessages(state: SurveyState): string {
 
 function nowIso() { return new Date().toISOString(); }
 function normalizeInput(input: string) { return input.trim(); }
+
+function getConfiguredQuestion(state: SurveyState): SurveyQuestionConfig | undefined {
+  return activeQuestions.find((question) => question.id === state);
+}
+
+function parseOptionsFromMessage(text: string) {
+  return text
+    .split('\n')
+    .map((line) => line.trim().match(/^\s*(?:\d+)(?:\uFE0F?\u20E3)?\s*[\)\.\-:]?\s*(.+)$/u)?.[1]?.trim() || '')
+    .filter(Boolean);
+}
+
+function getStateOptions(state: SurveyState) {
+  const configured = getConfiguredQuestion(state)?.options?.filter(Boolean);
+  if (configured?.length) return configured;
+
+  const defaults = defaultQuestionOptions[state];
+  if (defaults?.length) return defaults;
+
+  const parsed = parseOptionsFromMessage(activeMessages[state] || defaultMessages[state] || '');
+  return parsed.length ? parsed : [];
+}
+
+function getStateQuestionType(state: SurveyState): QuestionType {
+  return getConfiguredQuestion(state)?.type || defaultQuestionTypes[state] || 'open_text';
+}
+
+function renderQuestionMessage(state: SurveyState, humanMode: boolean) {
+  const configured = getConfiguredQuestion(state);
+  const text = configured?.text || activeMessages[state] || '';
+  const options = getStateOptions(state);
+  const type = getStateQuestionType(state);
+
+  if (!options.length || humanMode) {
+    return text;
+  }
+
+  const numberedOptions = options.map((option, index) => `${index + 1}. ${option}`).join('\n');
+  const multiSelectHint = type === 'multi_select'
+    ? '\n\nتقدر تختار أكثر من خيار. اكتب الأرقام مفصولة بفواصل، مثال: 1، 2، 3'
+    : '';
+
+  return `${text.trim()}\n\n${numberedOptions}${multiSelectHint}`;
+}
+
+function resolveChoiceText(state: SurveyState, input: string) {
+  const options = getStateOptions(state);
+  if (!options.length) return normalizeInput(input);
+
+  const normalized = normalizeInput(input);
+  const idMatch = normalized.match(/^opt_(\d+)$/i);
+  if (idMatch) {
+    const selected = options[Number(idMatch[1]) - 1];
+    return selected || normalized;
+  }
+
+  const numberTokens = normalized
+    .replace(/[،;|]/g, ',')
+    .split(/[,\s]+/)
+    .map((token) => token.trim())
+    .filter(Boolean)
+    .map((token) => Number(token))
+    .filter((value) => Number.isInteger(value) && value >= 1 && value <= options.length);
+
+  const type = getStateQuestionType(state);
+  if (numberTokens.length > 0) {
+    const unique = Array.from(new Set(numberTokens));
+    if (type === 'multi_select' || unique.length > 1) {
+      return unique.map((index) => options[index - 1]).filter(Boolean).join('، ');
+    }
+
+    return options[unique[0] - 1] || normalized;
+  }
+
+  return normalized;
+}
 
 function containsAny(input: string, keywords: string[]) {
   return keywords.some((keyword) => input.includes(keyword));
@@ -263,7 +417,7 @@ function isMaybeDirectPurchase(input: string) {
 }
 
 export function captureAnswer(currentState: SurveyState, input: string, data: SurveyResponseData) {
-  const normalizedInput = normalizeInput(input);
+  const normalizedInput = resolveChoiceText(currentState, input);
   switch (currentState) {
     case 'GREETING': case 'APPROVAL': break;
     case 'ASK_PLATFORMS':
@@ -306,9 +460,10 @@ export function captureAnswer(currentState: SurveyState, input: string, data: Su
 }
 
 export function determineNextState(currentState: SurveyState, input: string, data: SurveyResponseData): SurveyState {
+  const answer = resolveChoiceText(currentState, input);
   switch (currentState) {
     case 'GREETING': {
-      const approved = parseApproval(input);
+      const approved = parseApproval(answer);
       return approved === false ? 'REJECTED' : 'ASK_PLATFORMS';
     }
     case 'APPROVAL': return 'ASK_PLATFORMS';
@@ -337,8 +492,8 @@ export function determineNextState(currentState: SurveyState, input: string, dat
     case 'ASK_CANCEL_REASON': return 'ASK_BIGGEST_ANNOYANCE';
     case 'ASK_BIGGEST_ANNOYANCE': return 'ASK_DIRECT_PROBABILITY';
     case 'ASK_DIRECT_PROBABILITY':
-      if (isLikelyDirectPurchase(input)) return 'ASK_DIRECT_ENCOURAGEMENT';
-      return isMaybeDirectPurchase(input) ? 'ASK_DIRECT_HESITATION' : 'ASK_REFUSAL_REASON';
+      if (isLikelyDirectPurchase(answer)) return 'ASK_DIRECT_ENCOURAGEMENT';
+      return isMaybeDirectPurchase(answer) ? 'ASK_DIRECT_HESITATION' : 'ASK_REFUSAL_REASON';
     case 'ASK_DIRECT_ENCOURAGEMENT':
     case 'ASK_DIRECT_HESITATION':
     case 'ASK_REFUSAL_REASON': return 'COMPLETED';
@@ -347,6 +502,8 @@ export function determineNextState(currentState: SurveyState, input: string, dat
 }
 
 export function getMessageForState(state: SurveyState) {
+  const configured = getConfiguredQuestion(state);
+  if (configured) return renderQuestionMessage(state, surveyConfig.humanMode);
   if (surveyConfig.humanMode) return getHumanModeMessages(state);
   return activeMessages[state] || '';
 }

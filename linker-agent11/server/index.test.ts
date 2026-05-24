@@ -80,3 +80,25 @@ test('health check returns ok', async () => {
     assert.equal(res.status, 200);
   });
 });
+
+test('recipient preview only accepts numbers from the submitted payload', async () => {
+  await withServer(async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/admin/campaigns/preview-recipients`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        customers: [
+          { phone: '777123456', name: 'A' },
+          { phone: '777123456', name: 'Duplicate' },
+          { phone: 'not-a-phone', name: 'Invalid' },
+        ],
+      }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json() as { preview: { validCount: number; duplicateCount: number; invalidCount: number; recipients: Array<{ phone: string }> } };
+    assert.equal(data.preview.validCount, 1);
+    assert.equal(data.preview.duplicateCount, 1);
+    assert.equal(data.preview.invalidCount, 1);
+    assert.deepEqual(data.preview.recipients.map((recipient) => recipient.phone), ['967777123456']);
+  });
+});

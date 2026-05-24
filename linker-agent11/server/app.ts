@@ -10,7 +10,7 @@ import {
   resetSurveyConfig,
   type ConversationStore,
 } from './conversationEngine';
-import { MarketIntelligenceStore } from './marketIntelligenceStore';
+import { MarketIntelligenceStore, type CampaignRecipientRecord } from './marketIntelligenceStore';
 
 import { qualityMonitor, campaignScheduler, canSendNow, getMessageForPhase, warmUpSchedule, humanizationEngine, hasSpamKeywords } from './messagingEngine';
 import { whatsappTemplates } from './whatsappTemplates';
@@ -32,6 +32,77 @@ function normalizePhone(value: unknown): string {
 
 function isValidPhone(phone: string): boolean {
   return phone.length >= 9 && phone.length <= 15;
+}
+
+interface RecipientInput {
+  phone?: unknown;
+  name?: unknown;
+  city?: unknown;
+}
+
+interface InvalidRecipient {
+  row: number;
+  rawPhone: string;
+  reason: string;
+}
+
+interface DuplicateRecipient {
+  row: number;
+  phone: string;
+  firstRow: number;
+}
+
+function analyzeRecipients(rows: RecipientInput[] = []) {
+  const seen = new Map<string, number>();
+  const recipients: CampaignRecipientRecord[] = [];
+  const invalid: InvalidRecipient[] = [];
+  const duplicates: DuplicateRecipient[] = [];
+
+  rows.forEach((row, index) => {
+    const rowNumber = index + 1;
+    const rawPhone = stringField(row.phone);
+    const phone = normalizePhone(rawPhone);
+
+    if (!phone) {
+      invalid.push({ row: rowNumber, rawPhone, reason: 'missing_phone' });
+      return;
+    }
+
+    if (!isValidPhone(phone)) {
+      invalid.push({ row: rowNumber, rawPhone, reason: 'invalid_phone' });
+      return;
+    }
+
+    const firstRow = seen.get(phone);
+    if (firstRow) {
+      duplicates.push({ row: rowNumber, phone, firstRow });
+      return;
+    }
+
+    seen.set(phone, rowNumber);
+    recipients.push({
+      phone,
+      name: stringField(row.name),
+      city: stringField(row.city),
+    });
+  });
+
+  return {
+    totalRows: rows.length,
+    validCount: recipients.length,
+    duplicateCount: duplicates.length,
+    invalidCount: invalid.length,
+    recipients,
+    duplicates,
+    invalid,
+  };
+}
+
+function campaignStatusFromLaunchMode(launchMode: string, requestedStatus?: string) {
+  if (requestedStatus === 'draft') return 'draft';
+  if (launchMode === 'schedule') return 'scheduled';
+  if (launchMode === 'draft') return 'draft';
+  return 'active';
 }
 
 function normalizeProviderUrl(value: string): string {
@@ -334,33 +405,72 @@ export function createServerApp(options: ServerAppOptions = {}) {
     apiToken: process.env.WHATSAPP_API_TOKEN || '',
   };
 
-  function parseNumberedOptions(text: string) {
+  function parseInteractiveMessage(text: string) {
     const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
-    const options = lines
-      .map(line => {
+    const options: string[] = [];
+    const promptLines: string[] = [];
+
+    for (const line of lines) {
         const match = line.match(/^\s*(?:\d+)(?:\uFE0F?\u20E3)?\s*[\)\.\-:]?\s*(.+)$/u);
-        return match ? match[1].trim() : '';
-      })
-      .filter(Boolean);
-    return options.length >= 2 ? options : [];
+      if (match?.[1]) {
+        const title = match[1].trim();
+        if (title && !options.includes(title)) options.push(title);
+        continue;
+      }
+      if (options.length > 0 && /تقدر تختار|يمكنك اختيار|اكتب الأرقام|مفصولة/.test(line)) {
+        continue;
+      }
+      promptLines.push(line);
+    }
+
+    const prompt = promptLines.join('\n').trim() || text.trim();
+    const isMultiSelect = /أكثر من|اكثر من|عدة|متعددة|اختيارات متعددة|مفصولة|فواصل/.test(text);
+
+    return {
+      prompt,
+      options: options.length >= 2 ? options : [],
+      isMultiSelect,
+    };
+  }
+
+  function buildListRows(options: string[]) {
+    return options.slice(0, 10).map((title, index) => ({
+      id: `opt_${index + 1}`,
+      title: title.slice(0, 24),
+    }));
+  }
+
+  function buildMultiSelectText(prompt: string, options: string[]) {
+    const choices = options.map((option, index) => `${index + 1}. ${option}`).join('\n');
+    return `${prompt}\n\n${choices}\n\nتقدر تختار أكثر من خيار بكتابة الأرقام مفصولة بفواصل، مثال: 1، 2، 3`;
   }
 
   async function sendWhapiMessage(to: string, text: string) {
     try {
       if (!runtimeWaba.apiToken) return false;
-      const options = parseNumberedOptions(text);
-      if (options.length > 0) {
+      const parsedMessage = parseInteractiveMessage(text);
+      if (parsedMessage.options.length > 0 && parsedMessage.isMultiSelect) {
+        const res = await fetch(`${runtimeWaba.apiUrl}/messages/text`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${runtimeWaba.apiToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to, body: buildMultiSelectText(parsedMessage.prompt, parsedMessage.options) }),
+        });
+        if (!res.ok) console.error('[whapi] multi-select text send failed:', res.status, await res.text());
+        return res.ok;
+      }
+
+      if (parsedMessage.options.length > 0) {
         const interactiveRes = await fetch(`${runtimeWaba.apiUrl}/messages/interactive`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${runtimeWaba.apiToken}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             to,
             type: 'list',
-            header: { type: 'text', text: 'اختر إجابتك' },
-            body: { text },
+            header: { type: 'text', text: 'اختر الإجابة' },
+            body: { text: parsedMessage.prompt },
             action: {
-              button: 'عرض الخيارات',
-              sections: [{ title: 'خيارات الاستبيان', rows: options.map((title, i) => ({ id: `opt_${i+1}`, title })) }],
+              button: 'اختر الإجابة',
+              sections: [{ title: 'الخيارات', rows: buildListRows(parsedMessage.options) }],
             },
           }),
         });
@@ -488,10 +598,15 @@ export function createServerApp(options: ServerAppOptions = {}) {
           text,
           payload: body,
         });
+        qualityMonitor.recordReply();
 
         const reply = await conversationEngine.handleIncomingMessage(phone, text);
         if (reply) {
+          if (getSurveyConfig().humanMode) {
+            await new Promise((resolve) => setTimeout(resolve, humanizationEngine.randomDelay(1200, 4500)));
+          }
           const sent = await sendWhapiMessage(phone, reply);
+          if (sent) qualityMonitor.recordSent();
           await marketStore.logWhatsappMessage({
             direction: 'outbound',
             phone,
@@ -510,7 +625,11 @@ export function createServerApp(options: ServerAppOptions = {}) {
 
       const reply = await conversationEngine.handleIncomingMessage(phone, message);
       if (reply) {
+        if (getSurveyConfig().humanMode) {
+          await new Promise((resolve) => setTimeout(resolve, humanizationEngine.randomDelay(1200, 4500)));
+        }
         const sent = await sendWhapiMessage(phone, reply);
+        if (sent) qualityMonitor.recordSent();
         await marketStore.logWhatsappMessage({
           direction: 'outbound',
           phone,
@@ -535,15 +654,64 @@ export function createServerApp(options: ServerAppOptions = {}) {
   // ─── Campaign launcher: sends first message + starts conversation ─────────
   app.post('/api/campaigns/launch', async (request, response) => {
     try {
-      const { customers, campaignId = 'default' } = request.body as {
-        customers: Array<{ phone: string; name: string; city: string }>;
+      const {
+        customers,
+        campaignId = `campaign_${Date.now()}`,
+        name = 'حملة استبيان جديدة',
+        description,
+        type = 'survey',
+        surveyTemplate = 'default',
+        launchMode = 'immediate',
+        scheduledAt,
+        status,
+        humanMode,
+      } = request.body as {
+        customers: Array<{ phone: string; name?: string; city?: string }>;
         campaignId?: string;
+        name?: string;
+        description?: string;
+        type?: string;
+        surveyTemplate?: string;
+        launchMode?: string;
+        scheduledAt?: string;
+        status?: string;
+        humanMode?: boolean;
       };
 
-      if (!customers?.length) {
+      const preview = analyzeRecipients(customers || []);
+
+      if (!preview.recipients.length) {
         response.status(400).json({ ok: false, message: 'No customers provided' });
         return;
       }
+
+      const campaignStatus = campaignStatusFromLaunchMode(launchMode, status);
+      await marketStore.createCampaign({
+        id: campaignId,
+        name: stringField(name) || 'حملة استبيان جديدة',
+        description: stringField(description),
+        type: stringField(type) || 'survey',
+        surveyTemplate: stringField(surveyTemplate) || 'default',
+        launchMode,
+        scheduledAt,
+        status: campaignStatus,
+        humanMode: Boolean(humanMode),
+        recipientCount: preview.totalRows,
+        validRecipientCount: preview.validCount,
+        duplicateRecipientCount: preview.duplicateCount,
+        invalidRecipientCount: preview.invalidCount,
+      });
+      await marketStore.replaceCampaignRecipients(campaignId, preview.recipients, preview);
+
+      if (typeof humanMode === 'boolean') {
+        updateSurveyConfig({ humanMode });
+      }
+
+      if (campaignStatus !== 'active') {
+        response.json({ ok: true, campaignId, status: campaignStatus, queued: 0, preview });
+        return;
+      }
+
       const effectiveApiUrl = runtimeWaba.apiUrl;
       const effectiveApiToken = runtimeWaba.apiToken;
 
@@ -558,8 +726,25 @@ export function createServerApp(options: ServerAppOptions = {}) {
 
       async function sendWithToken(to: string, text: string) {
         try {
-          const options = parseNumberedOptions(text);
-          if (options.length > 0) {
+          const parsedMessage = parseInteractiveMessage(text);
+          if (parsedMessage.options.length > 0 && parsedMessage.isMultiSelect) {
+            const res = await fetch(`${effectiveApiUrl}/messages/text`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${effectiveApiToken}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ to, body: buildMultiSelectText(parsedMessage.prompt, parsedMessage.options) }),
+            });
+            if (!res.ok) {
+              const errText = await res.text();
+              console.error('[whapi] multi-select text send failed:', res.status, errText);
+              if (res.status === 401 || res.status === 403) {
+                throw new Error(`❌ ${parseWhapiError(res.status, errText)}`);
+              }
+              return false;
+            }
+            return true;
+          }
+
+          if (parsedMessage.options.length > 0) {
             const interactiveRes = await fetch(`${effectiveApiUrl}/messages/interactive`, {
               method: 'POST',
               headers: { Authorization: `Bearer ${effectiveApiToken}`, 'Content-Type': 'application/json' },
@@ -567,10 +752,10 @@ export function createServerApp(options: ServerAppOptions = {}) {
                 to,
                 type: 'list',
                 header: { type: 'text', text: 'اختر إجابتك' },
-                body: { text },
+                body: { text: parsedMessage.prompt },
                 action: {
-                  button: 'عرض الخيارات',
-                  sections: [{ title: 'خيارات الاستبيان', rows: options.map((title, i) => ({ id: `opt_${i+1}`, title })) }],
+                  button: 'اختر الإجابة',
+                  sections: [{ title: 'الخيارات', rows: buildListRows(parsedMessage.options) }],
                 },
               }),
             });
@@ -604,9 +789,8 @@ export function createServerApp(options: ServerAppOptions = {}) {
 
       let queued = 0;
       const errors: string[] = [];
-      for (const customer of customers) {
-        const phone = normalizePhone(customer.phone);
-        if (!isValidPhone(phone)) continue;
+      for (const customer of preview.recipients) {
+        const phone = customer.phone;
 
         try {
           const greeting = await conversationEngine.startConversation(phone, campaignId, {
@@ -614,6 +798,7 @@ export function createServerApp(options: ServerAppOptions = {}) {
             city: customer.city,
           });
           const sent = await sendWithToken(phone, greeting);
+          if (sent) qualityMonitor.recordSent();
           await marketStore.logWhatsappMessage({
             direction: 'outbound',
             phone,
@@ -622,20 +807,28 @@ export function createServerApp(options: ServerAppOptions = {}) {
             text: greeting,
             error: sent ? undefined : 'Provider send failed',
           });
+          await marketStore.markCampaignRecipientStatus(campaignId, phone, sent ? 'sent' : 'failed', sent ? undefined : 'Provider send failed');
           if (sent) queued++;
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : 'Error';
           errors.push(errMsg);
+          await marketStore.markCampaignRecipientStatus(campaignId, phone, 'failed', errMsg);
           if (errMsg.includes('401') || errMsg.includes('403') || errMsg.includes('Token')) {
             response.status(401).json({ ok: false, message: errMsg, queued });
             return;
           }
         }
 
-        await new Promise(r => setTimeout(r, 2500));
+        const delayMs = process.env.NODE_ENV === 'test'
+          ? 0
+          : getSurveyConfig().humanMode
+            ? humanizationEngine.randomDelay(7000, 22000)
+            : humanizationEngine.randomDelay(1800, 4200);
+        if (delayMs > 0) await new Promise(r => setTimeout(r, delayMs));
       }
 
-      response.json({ ok: true, queued, errors: errors.length > 0 ? errors : undefined });
+      await marketStore.markCampaignStatus(campaignId, 'completed');
+      response.json({ ok: true, campaignId, queued, preview, errors: errors.length > 0 ? errors : undefined });
     } catch (err) {
       void marketStore.logSystemEvent({
         level: 'error',
@@ -646,6 +839,82 @@ export function createServerApp(options: ServerAppOptions = {}) {
       });
       console.error('[campaign-launch]', err);
       response.status(500).json({ ok: false, message: err instanceof Error ? err.message : 'Error' });
+    }
+  });
+
+  app.get('/api/admin/campaigns', async (_request, response) => {
+    try {
+      if (!hasDatabaseConfig() && !options.marketStore) {
+        response.status(503).json({ ok: false, message: 'DATABASE_URL is not configured', code: 'DATABASE_UNAVAILABLE' });
+        return;
+      }
+      response.json({ ok: true, campaigns: await marketStore.listCampaigns() });
+    } catch (error) {
+      void marketStore.logSystemEvent({
+        level: 'error',
+        type: 'campaigns_fetch_failed',
+        route: '/api/admin/campaigns',
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      response.status(500).json({ ok: false, message: 'Error fetching campaigns' });
+    }
+  });
+
+  app.post('/api/admin/campaigns/preview-recipients', async (request, response) => {
+    const { customers = [] } = request.body || {};
+    response.json({ ok: true, preview: analyzeRecipients(Array.isArray(customers) ? customers : []) });
+  });
+
+  app.post('/api/admin/campaigns', async (request, response) => {
+    try {
+      if (!hasDatabaseConfig() && !options.marketStore) {
+        response.status(503).json({ ok: false, message: 'DATABASE_URL is not configured', code: 'DATABASE_UNAVAILABLE' });
+        return;
+      }
+
+      const {
+        customers = [],
+        id,
+        name,
+        description,
+        type = 'survey',
+        surveyTemplate = 'default',
+        launchMode = 'draft',
+        scheduledAt,
+        status,
+        humanMode = false,
+      } = request.body || {};
+
+      const campaignId = stringField(id) || `campaign_${Date.now()}`;
+      const preview = analyzeRecipients(Array.isArray(customers) ? customers : []);
+      const campaignStatus = campaignStatusFromLaunchMode(stringField(launchMode) || 'draft', stringField(status));
+
+      const campaign = await marketStore.createCampaign({
+        id: campaignId,
+        name: stringField(name) || 'حملة استبيان جديدة',
+        description: stringField(description),
+        type: stringField(type) || 'survey',
+        surveyTemplate: stringField(surveyTemplate) || 'default',
+        launchMode: stringField(launchMode) || 'draft',
+        scheduledAt,
+        status: campaignStatus,
+        humanMode: Boolean(humanMode),
+        recipientCount: preview.totalRows,
+        validRecipientCount: preview.validCount,
+        duplicateRecipientCount: preview.duplicateCount,
+        invalidRecipientCount: preview.invalidCount,
+      });
+      await marketStore.replaceCampaignRecipients(campaignId, preview.recipients, preview);
+
+      response.status(201).json({ ok: true, campaign, preview });
+    } catch (error) {
+      void marketStore.logSystemEvent({
+        level: 'error',
+        type: 'campaign_create_failed',
+        route: '/api/admin/campaigns',
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      response.status(500).json({ ok: false, message: 'Error creating campaign' });
     }
   });
 
