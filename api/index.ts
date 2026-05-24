@@ -15,15 +15,20 @@ function fail(res: any, code: number, msg: string) {
 function stringField(v: unknown) { return typeof v === 'string' ? v.trim() : ''; }
 
 async function readBody(req: any): Promise<any> {
-  if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body) && Object.keys(req.body).length > 0) {
+  console.log('[readBody] type:', typeof req.body, 'keys:', req.body ? Object.keys(req.body).length : 'null', 'isBuffer:', Buffer.isBuffer(req.body));
+  if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
     return req.body;
   }
   try {
-    const bufs: Buffer[] = [];
-    for await (const chunk of req) { bufs.push(chunk); }
-    const raw = Buffer.concat(bufs).toString();
+    const chunks: any[] = [];
+    for await (const chunk of req) { chunks.push(chunk); }
+    const raw = Buffer.concat(chunks).toString();
+    console.log('[readBody] stream raw length:', raw.length);
     return raw ? JSON.parse(raw) : {};
-  } catch { return {}; }
+  } catch (e) {
+    console.error('[readBody] stream error:', e);
+    return {};
+  }
 }
 
 // ── In-memory state ────────────────────────────────────────────────────────
@@ -119,6 +124,8 @@ export default async function handler(req: any, res: any) {
   if (url.includes('/campaigns/launch') && req.method === 'POST') {
     const body = await readBody(req);
     const customers = Array.isArray(body.customers) ? body.customers : [];
+    console.log('[campaign] body keys:', Object.keys(body).join(','), 'customers:', customers.length);
+    if (body.customers && !Array.isArray(body.customers)) console.log('[campaign] WARN customers is not array:', typeof body.customers);
     const w = body.waba || {};
     const token = stringField(w.apiKey) || whapiToken;
     const baseUrl = (stringField(w.apiUrl) || whapiUrl).replace(/\/$/, '');
