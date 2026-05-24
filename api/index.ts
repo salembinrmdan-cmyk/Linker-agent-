@@ -125,7 +125,22 @@ export default async function handler(req: any, res: any) {
     const body = await readBody(req);
     const customers = Array.isArray(body.customers) ? body.customers : [];
     console.log('[campaign] body keys:', Object.keys(body).join(','), 'customers:', customers.length);
-    if (body.customers && !Array.isArray(body.customers)) console.log('[campaign] WARN customers is not array:', typeof body.customers);
+
+    // Return diagnostic info so user can see in Network tab
+    if (customers.length === 0) {
+      return ok(res, {
+        ok: true,
+        queued: 0,
+        debug: {
+          bodyKeys: Object.keys(body),
+          customersType: typeof body.customers,
+          customersLen: customers.length,
+          hasWaba: !!body.waba,
+          wabaKeys: body.waba ? Object.keys(body.waba) : [],
+        },
+        message: 'لا يوجد مستلمون — تأكد من رفع ملف العملاء',
+      });
+    }
     const w = body.waba || {};
     const token = stringField(w.apiKey) || whapiToken;
     const baseUrl = (stringField(w.apiUrl) || whapiUrl).replace(/\/$/, '');
