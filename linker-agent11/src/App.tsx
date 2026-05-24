@@ -264,7 +264,13 @@ function useMarketData() {
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
   const text = await response.text();
-  const data = text ? JSON.parse(text) as T : ({} as T);
+  let data: T;
+  try {
+    data = text ? JSON.parse(text) as T : ({} as T);
+  } catch {
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    throw new Error('Invalid JSON response');
+  }
   if (!response.ok) {
     const message = typeof data === 'object' && data && 'message' in data ? String((data as { message?: unknown }).message) : `HTTP ${response.status}`;
     throw new Error(message);
