@@ -1239,16 +1239,20 @@ function CampaignsPage() {
     }
   };
 
-  const createPayload = (mode: string) => ({
-    ...form,
-    launchMode: mode,
-    status: mode === 'draft' ? 'draft' : mode === 'schedule' ? 'scheduled' : 'active',
-    campaignId: `campaign_${Date.now()}`,
-    id: `campaign_${Date.now()}`,
-    name: form.name.trim() || 'حملة استبيان جديدة',
-    customers: preview.recipients,
-    scheduledAt: form.scheduledAt || undefined,
-  });
+  const createPayload = (mode: string) => {
+    const waba = (() => { try { const r = localStorage.getItem('linker_waba_settings'); return r ? JSON.parse(r) : null; } catch { return null; } })();
+    return {
+      ...form,
+      launchMode: mode,
+      status: mode === 'draft' ? 'draft' : mode === 'schedule' ? 'scheduled' : 'active',
+      campaignId: `campaign_${Date.now()}`,
+      id: `campaign_${Date.now()}`,
+      name: form.name.trim() || 'حملة استبيان جديدة',
+      customers: preview.recipients,
+      waba,
+      scheduledAt: form.scheduledAt || undefined,
+    };
+  };
 
   const saveDraft = async () => {
     const payload = createPayload('draft');
@@ -1344,10 +1348,18 @@ function RecipientPreviewPanel({ preview }: { preview: RecipientPreview }) {
 }
 
 function SettingsPage() {
-  const [waba, setWaba] = useState({ provider: 'custom', apiUrl: 'https://gate.whapi.cloud/', apiKey: '', phoneId: '', businessId: '', webhookToken: '' });
+  const loadWaba = () => {
+    try {
+      const raw = localStorage.getItem('linker_waba_settings');
+      if (raw) return JSON.parse(raw);
+    } catch { /* ignore */ }
+    return { provider: 'custom', apiUrl: 'https://gate.whapi.cloud/', apiKey: 'oVKAY7FJH3p1H8qlV8LfyAPIrAmwdRhb', phoneId: '', businessId: '', webhookToken: '' };
+  };
+  const [waba, setWaba] = useState(loadWaba);
   const [webhookUrl, setWebhookUrl] = useState('/api/integrations/survey-agent/webhook');
   const [toast, setToast] = useState<ToastState>(null);
   const save = async () => {
+    localStorage.setItem('linker_waba_settings', JSON.stringify(waba));
     const response = await fetch('/api/admin/settings/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ waba, webhookUrl }) });
     setToast({ message: response.ok ? 'تم حفظ الإعدادات' : 'فشل حفظ الإعدادات', type: response.ok ? 'success' : 'error' });
   };
