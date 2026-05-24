@@ -1,5 +1,19 @@
 {
   "name": "linker-agent-vercel-root",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "install:app": "npm install --include=optional --prefix Linker-agent--main/linker-agent11",
+    "build": "npm run build --prefix Linker-agent--main/linker-agent11",
+    "vercel-build": "npm run build --prefix Linker-agent--main/linker-agent11",
+    "dev": "npm run dev --prefix Linker-agent--main/linker-agent11",
+    "start": "npm run start --prefix Linker-agent--main/linker-agent11",
+    "preview": "npm run preview --prefix Linker-agent--main/linker-agent11",
+    "prisma:generate": "npx prisma generate --schema=Linker-agent--main/linker-agent11/prisma/schema.prisma"
+  },
+  "engines": {
+    "node": "20.x"
+  },
+  "dependencies": {},
+  "devDependencies": {}
 }
