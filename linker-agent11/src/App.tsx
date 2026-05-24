@@ -997,8 +997,9 @@ function SurveyEnginePage() {
   const selected = questions.find((question) => question.id === selectedId) || questions[0];
 
   useEffect(() => {
-    fetchJson<{ humanMode?: boolean; questions?: SurveyQuestion[] }>('/api/admin/survey/config')
-      .then((config) => {
+    fetchJson<{ humanMode?: boolean; questions?: SurveyQuestion[]; config?: { humanMode?: boolean; questions?: SurveyQuestion[] } }>('/api/admin/survey/config')
+      .then((response) => {
+        const config = response.config || response;
         setHumanMode(Boolean(config.humanMode));
         if (Array.isArray(config.questions) && config.questions.length) {
           setQuestions(config.questions.map((question) => ({ ...question, options: question.options || [], type: question.type || 'open_text' })));
@@ -1051,12 +1052,25 @@ function SurveyEnginePage() {
   };
 
   const saveConfig = async () => {
-    await fetch('/api/admin/survey/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ humanMode, questions }),
-    });
-    setToast({ message: 'تم حفظ محرك الاستبيان', type: 'success' });
+    try {
+      const response = await fetch('/api/admin/survey/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ humanMode, questions }),
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({ message: `HTTP ${response.status}` }));
+        setToast({ message: `❌ فشل الحفظ: ${errData.message || 'خطأ في الخادم'}`, type: 'error' });
+        return;
+      }
+      const data = await response.json();
+      if (data?.config?.questions) {
+        setQuestions(data.config.questions.map((q: SurveyQuestion) => ({ ...q, options: q.options || [], type: q.type || 'open_text' })));
+      }
+      setToast({ message: '✅ تم حفظ محرك الاستبيان', type: 'success' });
+    } catch (err) {
+      setToast({ message: `❌ فشل الاتصال بالخادم`, type: 'error' });
+    }
   };
 
   return (
