@@ -25,17 +25,24 @@ function hasDatabaseConfig() {
 
 function normalizePhone(value: unknown): string {
   let digits = stringField(value).replace(/\D/g, '');
+  if (digits.startsWith('00967')) digits = digits.slice(2);
   if (digits.startsWith('00')) digits = digits.slice(2);
-  if (digits.length === 9 && digits.startsWith('7')) digits = `967${digits}`;
+  if (digits.startsWith('0967')) digits = digits.slice(1);
+  if (digits.startsWith('0') && digits.length === 10) digits = digits.slice(1);
+  if (digits.length === 9) digits = `967${digits}`;
   return digits;
 }
 
 function isValidPhone(phone: string): boolean {
-  return phone.length >= 9 && phone.length <= 15;
+  if (!/^967\d{9}$/.test(phone)) return false;
+  return ['77', '73', '71', '70', '78'].includes(phone.slice(3, 5));
 }
 
 interface RecipientInput {
   phone?: unknown;
+  phoneNumber?: unknown;
+  mobile?: unknown;
+  whatsapp?: unknown;
   name?: unknown;
   city?: unknown;
 }
@@ -60,7 +67,7 @@ function analyzeRecipients(rows: RecipientInput[] = []) {
 
   rows.forEach((row, index) => {
     const rowNumber = index + 1;
-    const rawPhone = stringField(row.phone);
+    const rawPhone = stringField(row.phone ?? row.phoneNumber ?? row.mobile ?? row.whatsapp);
     const phone = normalizePhone(rawPhone);
 
     if (!phone) {
@@ -656,6 +663,7 @@ export function createServerApp(options: ServerAppOptions = {}) {
     try {
       const {
         customers,
+        recipients,
         campaignId = `campaign_${Date.now()}`,
         name = 'حملة استبيان جديدة',
         description,
@@ -666,7 +674,8 @@ export function createServerApp(options: ServerAppOptions = {}) {
         status,
         humanMode,
       } = request.body as {
-        customers: Array<{ phone: string; name?: string; city?: string }>;
+        customers?: Array<{ phone?: string; phoneNumber?: string; mobile?: string; whatsapp?: string; name?: string; city?: string }>;
+        recipients?: Array<{ phone?: string; phoneNumber?: string; mobile?: string; whatsapp?: string; name?: string; city?: string }>;
         campaignId?: string;
         name?: string;
         description?: string;
@@ -678,10 +687,13 @@ export function createServerApp(options: ServerAppOptions = {}) {
         humanMode?: boolean;
       };
 
-      const preview = analyzeRecipients(customers || []);
+      const incomingRecipients = Array.isArray(customers) ? customers : Array.isArray(recipients) ? recipients : [];
+      console.info('[campaign-launch-api] received', { count: incomingRecipients.length, first: incomingRecipients[0] || null });
+      const preview = analyzeRecipients(incomingRecipients);
+      console.info('[campaign-launch-api] analyzed', { valid: preview.validCount, invalid: preview.invalidCount, firstValid: preview.recipients[0] || null });
 
       if (!preview.recipients.length) {
-        response.status(400).json({ ok: false, message: 'No customers provided' });
+        response.status(400).json({ ok: false, message: 'لا يمكن إطلاق الحملة بدون مستلمين صالحين' });
         return;
       }
 
