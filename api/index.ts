@@ -123,34 +123,63 @@ export default async function handler(req: any, res: any) {
   // ── Campaign launch ────────────────────────────────────────────────────
   if (url.includes('/campaigns/launch') && req.method === 'POST') {
     const body = await readBody(req);
-    const customers = Array.isArray(body.customers) ? body.customers : [];
-    console.log('[campaign] body keys:', Object.keys(body).join(','), 'customers:', customers.length);
 
-    // Return diagnostic info so user can see in Network tab
-    if (customers.length === 0) {
-      return ok(res, {
-        ok: true,
-        queued: 0,
-        debug: {
-          bodyKeys: Object.keys(body),
-          customersType: typeof body.customers,
-          customersLen: customers.length,
-          hasWaba: !!body.waba,
-          wabaKeys: body.waba ? Object.keys(body.waba) : [],
-        },
-        message: 'لا يوجد مستلمون — تأكد من رفع ملف العملاء',
-      });
+    // Accept both 'customers' and 'recipients' field names
+    const rawList = Array.isArray(body.customers) ? body.customers
+      : Array.isArray(body.recipients) ? body.recipients : [];
+
+    console.log('[campaign] body keys:', Object.keys(body).join(','));
+    console.log('[campaign] rawList length:', rawList.length, 'first:', JSON.stringify(rawList[0] || null));
+
+    // Normalize phone numbers (Yemeni format)
+    function normalizePhone(v: unknown): string {
+      let d = String(v || '').replace(/\D/g, '');
+      if (d.startsWith('00967')) d = d.slice(2);
+      else if (d.startsWith('00')) d = d.slice(2);
+      else if (d.startsWith('0967')) d = d.slice(1);
+      else if (d.startsWith('0') && d.length === 10) d = d.slice(1);
+      if (d.length === 9) d = '967' + d;
+      return d;
     }
+    function isValidPhone(p: string): boolean {
+      return /^967[77|73|71|70|78]\d{7}$/.test(p) || /^967\d{9}$/.test(p);
+    }
+
+    const customers: Array<{ phone: string; name: string; city: string }> = [];
+    const skipped: string[] = [];
+
+    for (const row of rawList) {
+      const raw = String(row.phone || row.phoneNumber || row.mobile || row.whatsapp || '');
+      const phone = normalizePhone(raw);
+      if (!phone || !isValidPhone(phone)) {
+        skipped.push(raw || 'empty');
+        continue;
+      }
+      customers.push({ phone, name: String(row.name || ''), city: String(row.city || '') });
+    }
+
+    console.log('[campaign] valid:', customers.length, 'skipped:', skipped.length, 'first valid:', JSON.stringify(customers[0] || null));
+
+    if (customers.length === 0) {
+      return fail(res, 400, `لا يوجد مستلمون صالحون. الأرقام المُدخلة: ${rawList.length}، المرفوضة: ${skipped.length}. نماذج: ${skipped.slice(0,3).join(', ')}`);
+    }
+
+    // Get whapi credentials: payload → saved in-memory → defaults
     const w = body.waba || {};
     const token = stringField(w.apiKey) || whapiToken;
     const baseUrl = (stringField(w.apiUrl) || whapiUrl).replace(/\/$/, '');
-    console.log(`[campaign] token=${token.slice(0,6)}... customers=${customers.length}`);
 
-    if (customers.length === 0) return ok(res, { ok: true, queued: 0, message: 'لا يوجد مستلمون — تأكد من رفع ملف العملاء' });
+    if (!token) {
+      return fail(res, 400, 'يرجى إدخال API Token في صفحة الإعدادات أولاً');
+    }
 
-    if (token && webhookUrl) {
+    console.log(`[campaign] sending to ${customers.length} recipients. token=${token.slice(0,8)}...`);
+
+    // Register webhook if configured
+    const wh = stringField(body.webhookUrl) || webhookUrl;
+    if (token && wh) {
       await whapiCall(token, baseUrl, '/settings', {
-        webhooks: [{ url: webhookUrl, mode: 'body', events: [{ type: 'messages', method: 'post' }] }],
+        webhooks: [{ url: wh, mode: 'body', events: [{ type: 'messages', method: 'post' }] }],
       }, 'PATCH');
     }
 
@@ -161,34 +190,47 @@ export default async function handler(req: any, res: any) {
 
     for (let i = 0; i < limit; i++) {
       const c = customers[i];
-      let phone = String(c.phone || '').replace(/\D/g, '');
-      if (phone.length < 9) continue;
-      if (phone.length <= 10) phone = '967' + phone;
+      const phone = c.phone;
 
-      const r = await whapiCall(token, baseUrl, '/messages/interactive', {
+      // Try interactive buttons first, fallback to text
+      const interactiveRes = await whapiCall(token, baseUrl, '/messages/interactive', {
         to: phone,
         type: 'button',
         body: { text: greet() },
         action: {
           buttons: [
-            { type: 'reply', reply: { id: 'survey_start_yes', title: 'نعم، أبدأ' } },
-            { type: 'reply', reply: { id: 'survey_start_later', title: 'لاحقاً' } },
+            { type: 'reply', reply: { id: 'survey_yes', title: 'نعم، أبدأ 😊' } },
+            { type: 'reply', reply: { id: 'survey_later', title: 'لاحقاً' } },
           ],
         },
       });
 
-      if (r.ok && r.data?.messages?.[0]?.id) {
-        queued++;
-      } else {
-        failed++;
-        const err = r.data?.error?.message || r.body?.slice(0, 100) || `status ${r.status}`;
-        if (errors.length < 5) errors.push(`${phone}: ${err}`);
-        console.error(`[campaign] FAIL ${phone}: ${err}`);
+      let sent = interactiveRes.ok;
+
+      if (!sent) {
+        // Fallback to plain text
+        const textRes = await whapiCall(token, baseUrl, '/messages/text', {
+          to: phone,
+          body: greet() + '
+
+للبدء، رد بـ *نعم*',
+        });
+        sent = textRes.ok;
+        if (!sent) {
+          const err = interactiveRes.data?.error?.message || `status ${interactiveRes.status}`;
+          if (errors.length < 5) errors.push(`${phone}: ${err}`);
+          console.error(`[campaign] FAIL ${phone}: ${err}`);
+        }
       }
-      await new Promise(r => setTimeout(r, 2000));
+
+      if (sent) queued++;
+      else failed++;
+
+      if (i < limit - 1) await new Promise(r => setTimeout(r, 2200 + Math.random() * 1800));
     }
 
-    return ok(res, { ok: true, queued, failed, errors: errors.length ? errors : undefined });
+    console.log(`[campaign] done. queued=${queued} failed=${failed}`);
+    return ok(res, { ok: true, queued, failed, total: customers.length, errors: errors.length ? errors : undefined });
   }
 
   // ── Webhook ────────────────────────────────────────────────────────────
