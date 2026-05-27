@@ -673,6 +673,7 @@ export function createServerApp(options: ServerAppOptions = {}) {
         scheduledAt,
         status,
         humanMode,
+        waba,
       } = request.body as {
         customers?: Array<{ phone?: string; phoneNumber?: string; mobile?: string; whatsapp?: string; name?: string; city?: string }>;
         recipients?: Array<{ phone?: string; phoneNumber?: string; mobile?: string; whatsapp?: string; name?: string; city?: string }>;
@@ -685,7 +686,12 @@ export function createServerApp(options: ServerAppOptions = {}) {
         scheduledAt?: string;
         status?: string;
         humanMode?: boolean;
+        waba?: { apiUrl?: string; apiKey?: string };
       };
+
+      // Apply waba from payload (needed in Serverless where in-memory state resets)
+      if (waba?.apiKey) runtimeWaba.apiToken = waba.apiKey;
+      if (waba?.apiUrl) runtimeWaba.apiUrl = normalizeProviderUrl(waba.apiUrl);
 
       const incomingRecipients = Array.isArray(customers) ? customers : Array.isArray(recipients) ? recipients : [];
       console.info('[campaign-launch-api] received', { count: incomingRecipients.length, first: incomingRecipients[0] || null });

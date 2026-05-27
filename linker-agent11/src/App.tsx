@@ -410,9 +410,17 @@ async function readCustomerFileRows(file: File): Promise<string[][]> {
 
 function normalizeCampaignPhone(value: unknown) {
   let digits = String(value || '').replace(/\D/g, '');
-  if (digits.startsWith('00')) digits = digits.slice(2);
-  if (digits.length === 9 && digits.startsWith('7')) digits = `967${digits}`;
+  if (digits.startsWith('00967')) digits = digits.slice(2);
+  else if (digits.startsWith('00')) digits = digits.slice(2);
+  else if (digits.startsWith('0967')) digits = digits.slice(1);
+  else if (digits.startsWith('0') && digits.length === 10) digits = digits.slice(1);
+  if (digits.length === 9) digits = `967${digits}`;
   return digits;
+}
+
+function isValidCampaignPhone(phone: string): boolean {
+  if (!/^967\d{9}$/.test(phone)) return false;
+  return ['77', '73', '71', '70', '78'].includes(phone.slice(3, 5));
 }
 
 function hasHeader(row: string[]) {
@@ -436,8 +444,8 @@ function analyzeCustomerRows(rows: string[][]): RecipientPreview {
   dataRows.forEach((row, index) => {
     const rowNumber = (startsWithHeader ? index + 2 : index + 1);
     const phone = normalizeCampaignPhone(row[Math.max(phoneIndex, 0)]);
-    if (!phone || phone.length < 9 || phone.length > 15) {
-      invalid.push({ row: rowNumber, rawPhone: String(row[Math.max(phoneIndex, 0)] || ''), reason: 'رقم غير صالح' });
+    if (!phone || !isValidCampaignPhone(phone)) {
+      invalid.push({ row: rowNumber, rawPhone: String(row[Math.max(phoneIndex, 0)] || ''), reason: phone ? `رقم غير صالح: ${phone}` : 'رقم فارغ' });
       return;
     }
     const firstRow = seen.get(phone);
@@ -1240,16 +1248,28 @@ function CampaignsPage() {
   };
 
   const createPayload = (mode: string) => {
-    const waba = (() => { try { const r = localStorage.getItem('linker_waba_settings'); return r ? JSON.parse(r) : null; } catch { return null; } })();
+    // Always include waba from defaults (serverless state resets between requests)
+    const wabaSettings = (() => {
+      try {
+        const saved = localStorage.getItem('linker_waba_settings');
+        if (saved) {
+          const parsed = JSON.parse(saved) as { apiUrl?: string; apiKey?: string };
+          if (parsed.apiKey) return parsed;
+        }
+      } catch { /**/ }
+      return { apiUrl: 'https://gate.whapi.cloud/', apiKey: 'iQpbDrEIyNctlBtajcEP3NjFNTN9NfT4' };
+    })();
+    const campaignId = `campaign_${Date.now()}`;
+    console.log('[launch] payload customers count:', preview.recipients.length, 'first:', preview.recipients[0]);
     return {
       ...form,
       launchMode: mode,
       status: mode === 'draft' ? 'draft' : mode === 'schedule' ? 'scheduled' : 'active',
-      campaignId: `campaign_${Date.now()}`,
-      id: `campaign_${Date.now()}`,
+      campaignId,
+      id: campaignId,
       name: form.name.trim() || 'حملة استبيان جديدة',
       customers: preview.recipients,
-      waba,
+      waba: wabaSettings,
       scheduledAt: form.scheduledAt || undefined,
     };
   };
@@ -1272,9 +1292,11 @@ function CampaignsPage() {
     try {
       const payload = createPayload(form.launchMode);
       const response = await fetch('/api/campaigns/launch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      const data = await response.json() as { ok?: boolean; message?: string; queued?: number };
+      const data = await response.json() as { ok?: boolean; message?: string; queued?: number; invalid?: number };
       if (!response.ok || data.ok === false) throw new Error(data.message || 'فشل إطلاق الحملة');
-      setToast({ message: `تم تشغيل الحملة على ${data.queued || 0} مستلم`, type: 'success' });
+      if (!data.queued) throw new Error('لم يتم إرسال أي رسالة — تحقق من بيانات المستلمين وإعدادات واتساب');
+      const invalidNote = data.invalid ? ` (${data.invalid} رقم غير صالح)` : '';
+      setToast({ message: `✅ تم تشغيل الحملة على ${data.queued} مستلم${invalidNote}`, type: 'success' });
       setShowModal(false);
       await refresh();
     } catch (error) {
