@@ -211,9 +211,7 @@ export default async function handler(req: any, res: any) {
         // Fallback to plain text
         const textRes = await whapiCall(token, baseUrl, '/messages/text', {
           to: phone,
-          body: greet() + '
-
-للبدء، رد بـ *نعم*',
+          body: greet() + '\n\nللبدء، رد بـ *نعم*',
         });
         sent = textRes.ok;
         if (!sent) {
