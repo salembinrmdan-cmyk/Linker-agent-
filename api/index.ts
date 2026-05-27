@@ -64,6 +64,20 @@ function greet() {
 
 // ── Main handler ───────────────────────────────────────────────────────────
 export default async function handler(req: any, res: any) {
+  // Global safety net - prevent any unhandled crash from returning HTML
+  try {
+    return await handleRequest(req, res);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[handler] unhandled error:', msg);
+    if (!res.headersSent) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok: false, message: `خطأ داخلي: ${msg}` }));
+    }
+  }
+}
+
+async function handleRequest(req: any, res: any) {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
@@ -75,6 +89,7 @@ export default async function handler(req: any, res: any) {
   }
 
   const url = (req.url || '/').split('?')[0];
+  console.log('[req]', req.method, url);
 
   // ── Test connection ────────────────────────────────────────────────────
   if (url.includes('/test-connection') && req.method === 'POST') {
@@ -122,7 +137,8 @@ export default async function handler(req: any, res: any) {
 
   // ── Campaign launch ────────────────────────────────────────────────────
   if (url.includes('/campaigns/launch') && req.method === 'POST') {
-    const body = await readBody(req);
+    let body: any = {};
+    try { body = await readBody(req); } catch (e) { return fail(res, 400, 'فشل قراءة البيانات المرسلة'); }
 
     // Accept both 'customers' and 'recipients' field names
     const rawList = Array.isArray(body.customers) ? body.customers
