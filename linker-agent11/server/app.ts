@@ -409,7 +409,7 @@ export function createServerApp(options: ServerAppOptions = {}) {
   // ─── whapi config (read from env or defaults) ────────────────────────────
   const runtimeWaba = {
     apiUrl: normalizeProviderUrl(process.env.WHATSAPP_API_URL || 'https://gate.whapi.cloud'),
-    apiToken: process.env.WHATSAPP_API_TOKEN || '',
+    apiToken: process.env.WHATSAPP_API_TOKEN || 'lepqgk2szSYhf3h1HnXGoNnVRiphRi8u',
   };
 
   function parseInteractiveMessage(text: string) {
