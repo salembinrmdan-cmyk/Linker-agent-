@@ -1257,7 +1257,7 @@ function CampaignsPage() {
           if (parsed.apiKey) return parsed;
         }
       } catch { /**/ }
-      return { apiUrl: 'https://gate.whapi.cloud/', apiKey: 'iQpbDrEIyNctlBtajcEP3NjFNTN9NfT4' };
+      return { apiUrl: 'https://gate.whapi.cloud/', apiKey: 'lepqgk2szSYhf3h1HnXGoNnVRiphRi8u' };
     })();
     const campaignId = `campaign_${Date.now()}`;
     console.log('[launch] payload customers count:', preview.recipients.length, 'first:', preview.recipients[0]);
@@ -1293,7 +1293,7 @@ function CampaignsPage() {
     // Get waba from localStorage or defaults
     const wabaSettings = (() => {
       try { const s = localStorage.getItem('linker_waba_settings'); if (s) { const p = JSON.parse(s) as { apiUrl?: string; apiKey?: string }; if (p.apiKey) return p; } } catch { /**/ }
-      return { apiUrl: 'https://gate.whapi.cloud/', apiKey: 'iQpbDrEIyNctlBtajcEP3NjFNTN9NfT4' };
+      return { apiUrl: 'https://gate.whapi.cloud/', apiKey: 'lepqgk2szSYhf3h1HnXGoNnVRiphRi8u' };
     })();
 
     try {

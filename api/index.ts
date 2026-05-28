@@ -33,7 +33,7 @@ async function readBody(req: any): Promise<any> {
 
 // ── In-memory state ────────────────────────────────────────────────────────
 let whapiUrl = 'https://gate.whapi.cloud/';
-let whapiToken = 'oVKAY7FJH3p1H8qlV8LfyAPIrAmwdRhb';
+let whapiToken = 'lepqgk2szSYhf3h1HnXGoNnVRiphRi8u';
 let webhookUrl = '';
 let humanMode = false;
 
