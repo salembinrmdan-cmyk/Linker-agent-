@@ -92,13 +92,17 @@ async function handleRequest(req: any, res: any) {
   console.log('[req]', req.method, url);
 
   // ── Test connection ────────────────────────────────────────────────────
+  // Vercel servers cannot reach gate.whapi.cloud (outbound network blocked).
+  // The browser CAN reach it. So: server just saves the config,
+  // the frontend does the actual /health check directly from the browser.
   if (url.includes('/test-connection') && req.method === 'POST') {
     const body = await readBody(req);
-    const key = stringField(body.apiKey) || whapiToken;
-    const u = (stringField(body.apiUrl) || whapiUrl).replace(/\/$/, '');
-    const r = await whapiCall(key, u, '/health?wakeup=false', undefined, 'GET');
-    if (r.ok) { whapiToken = key; whapiUrl = u; }
-    return ok(res, { ok: r.ok, connected: r.ok, message: r.ok ? '✅ تم الاتصال بنجاح' : `❌ ${r.data?.error?.message || r.body}` });
+    const key = stringField(body.apiKey);
+    const u = stringField(body.apiUrl) || whapiUrl;
+    if (!key) return fail(res, 400, 'API Key مطلوب');
+    whapiToken = key;
+    whapiUrl = u.replace(/\/$/, '');
+    return ok(res, { ok: true, testFromClient: true, message: '✅ تم حفظ الإعدادات — جاري اختبار الاتصال...' });
   }
 
   // ── Save settings ──────────────────────────────────────────────────────
@@ -189,62 +193,18 @@ async function handleRequest(req: any, res: any) {
       return fail(res, 400, 'يرجى إدخال API Token في صفحة الإعدادات أولاً');
     }
 
-    console.log(`[campaign] sending to ${customers.length} recipients. token=${token.slice(0,8)}...`);
-
-    // Register webhook if configured
-    const wh = stringField(body.webhookUrl) || webhookUrl;
-    if (token && wh) {
-      await whapiCall(token, baseUrl, '/settings', {
-        webhooks: [{ url: wh, mode: 'body', events: [{ type: 'messages', method: 'post' }] }],
-      }, 'PATCH');
-    }
-
-    let queued = 0;
-    let failed = 0;
-    const errors: string[] = [];
-    const limit = Math.min(customers.length, 50);
-
-    for (let i = 0; i < limit; i++) {
-      const c = customers[i];
-      const phone = c.phone;
-
-      // Try interactive buttons first, fallback to text
-      const interactiveRes = await whapiCall(token, baseUrl, '/messages/interactive', {
-        to: phone,
-        type: 'button',
-        body: { text: greet() },
-        action: {
-          buttons: [
-            { type: 'reply', reply: { id: 'survey_yes', title: 'نعم، أبدأ 😊' } },
-            { type: 'reply', reply: { id: 'survey_later', title: 'لاحقاً' } },
-          ],
-        },
-      });
-
-      let sent = interactiveRes.ok;
-
-      if (!sent) {
-        // Fallback to plain text
-        const textRes = await whapiCall(token, baseUrl, '/messages/text', {
-          to: phone,
-          body: greet() + '\n\nللبدء، رد بـ *نعم*',
-        });
-        sent = textRes.ok;
-        if (!sent) {
-          const err = interactiveRes.data?.error?.message || `status ${interactiveRes.status}`;
-          if (errors.length < 5) errors.push(`${phone}: ${err}`);
-          console.error(`[campaign] FAIL ${phone}: ${err}`);
-        }
-      }
-
-      if (sent) queued++;
-      else failed++;
-
-      if (i < limit - 1) await new Promise(r => setTimeout(r, 2200 + Math.random() * 1800));
-    }
-
-    console.log(`[campaign] done. queued=${queued} failed=${failed}`);
-    return ok(res, { ok: true, queued, failed, total: customers.length, errors: errors.length ? errors : undefined });
+    // NOTE: Vercel cannot reach gate.whapi.cloud (network restriction).
+    // Return validated recipients to the CLIENT which sends messages directly via browser.
+    console.log(`[campaign] returning ${customers.length} validated recipients to client for sending`);
+    return ok(res, {
+      ok: true,
+      sendFromClient: true,  // tells frontend to send messages itself
+      customers,             // validated + normalized phone numbers
+      total: customers.length,
+      skipped: skipped.length,
+      greeting: greet(),
+      waba: { apiUrl: baseUrl, apiKey: token },
+    });
   }
 
   // ── Webhook ────────────────────────────────────────────────────────────

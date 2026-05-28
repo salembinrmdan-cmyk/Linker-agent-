@@ -1289,14 +1289,49 @@ function CampaignsPage() {
       return;
     }
     setLaunching(true);
+
+    // Get waba from localStorage or defaults
+    const wabaSettings = (() => {
+      try { const s = localStorage.getItem('linker_waba_settings'); if (s) { const p = JSON.parse(s) as { apiUrl?: string; apiKey?: string }; if (p.apiKey) return p; } } catch { /**/ }
+      return { apiUrl: 'https://gate.whapi.cloud/', apiKey: 'iQpbDrEIyNctlBtajcEP3NjFNTN9NfT4' };
+    })();
+
     try {
+      // Step 1: server validates phones + creates campaign record
       const payload = createPayload(form.launchMode);
       const response = await fetch('/api/campaigns/launch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      const data = await response.json() as { ok?: boolean; message?: string; queued?: number; invalid?: number };
-      if (!response.ok || data.ok === false) throw new Error(data.message || 'فشل إطلاق الحملة');
-      if (!data.queued) throw new Error('لم يتم إرسال أي رسالة — تحقق من بيانات المستلمين وإعدادات واتساب');
-      const invalidNote = data.invalid ? ` (${data.invalid} رقم غير صالح)` : '';
-      setToast({ message: `✅ تم تشغيل الحملة على ${data.queued} مستلم${invalidNote}`, type: 'success' });
+      const data = await response.json() as { ok?: boolean; message?: string; sendFromClient?: boolean; customers?: {phone:string;name:string;city:string}[]; greeting?: string; waba?: {apiUrl:string;apiKey:string}; total?: number };
+      if (!response.ok || data.ok === false) throw new Error(data.message || 'فشل التحقق من القائمة');
+
+      // Step 2: send from browser (Vercel servers cannot reach gate.whapi.cloud)
+      const validList = data.customers || preview.recipients;
+      if (!validList.length) throw new Error('لا يوجد مستلمون صالحون بعد التحقق');
+
+      const greeting = data.greeting || `مرحباً 👋
+معك فريق لينكر لوجستيكس.
+
+هل ممكن تشاركنا رأيك في تجربة الشحن؟ لا يأخذ أكثر من دقيقتين 🙏
+
+رد بـ *نعم* للبدء`;
+      const apiKey = data.waba?.apiKey || wabaSettings.apiKey;
+      const apiUrl = (data.waba?.apiUrl || wabaSettings.apiUrl || 'https://gate.whapi.cloud').replace(/\/+$/, '');
+
+      let sent = 0, failed = 0;
+      for (let i = 0; i < validList.length; i++) {
+        const c = validList[i];
+        try {
+          const r = await fetch(`${apiUrl}/messages/text`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ to: c.phone, body: greeting.replace('{name}', c.name || '') }),
+          });
+          if (r.ok) sent++; else { failed++; console.error('[send]', c.phone, r.status); }
+        } catch (e) { failed++; console.error('[send err]', c.phone, e); }
+        if (i < validList.length - 1) await new Promise(r => setTimeout(r, 2000 + Math.random() * 1500));
+      }
+
+      if (sent === 0) throw new Error(`فشل إرسال جميع الرسائل (${failed} فشل) — تحقق من الـ Token وحالة القناة`);
+      setToast({ message: `✅ تم الإرسال: ${sent} رسالة${failed > 0 ? `، ${failed} فشلت` : ''}`, type: 'success' });
       setShowModal(false);
       await refresh();
     } catch (error) {
@@ -1386,9 +1421,32 @@ function SettingsPage() {
     setToast({ message: response.ok ? 'تم حفظ الإعدادات' : 'فشل حفظ الإعدادات', type: response.ok ? 'success' : 'error' });
   };
   const test = async () => {
-    const response = await fetch('/api/test-connection', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: waba.provider, apiUrl: waba.apiUrl, apiKey: waba.apiKey }) });
-    const data = await response.json().catch(() => ({ message: 'تعذر قراءة الرد' })) as { message?: string };
-    setToast({ message: data.message || (response.ok ? 'تم الاتصال' : 'فشل الاتصال'), type: response.ok ? 'success' : 'error' });
+    setToast({ message: 'جاري اختبار الاتصال...', type: 'success' });
+    try {
+      // Call whapi DIRECTLY from browser — Vercel servers cannot reach gate.whapi.cloud
+      const baseUrl = (waba.apiUrl || 'https://gate.whapi.cloud').replace(/\/+$/, '');
+      const r = await fetch(`${baseUrl}/health?wakeup=false`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${waba.apiKey}`, Accept: 'application/json' },
+        signal: AbortSignal.timeout(10000),
+      });
+      const text = await r.text();
+      let channelStatus = '';
+      try { channelStatus = (JSON.parse(text) as Record<string, unknown>)?.status as string || ''; } catch { /**/ }
+      if (r.ok) {
+        // Save config to server (best-effort, non-blocking)
+        fetch('/api/test-connection', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apiKey: waba.apiKey, apiUrl: waba.apiUrl }) }).catch(() => {});
+        localStorage.setItem('linker_waba_settings', JSON.stringify({ apiUrl: waba.apiUrl, apiKey: waba.apiKey }));
+        setToast({ message: `✅ تم الاتصال بنجاح${channelStatus ? ' — القناة: ' + channelStatus : ''}`, type: 'success' });
+      } else {
+        let errMsg = `كود: ${r.status}`;
+        try { errMsg = (JSON.parse(text) as Record<string, unknown>)?.message as string || errMsg; } catch { /**/ }
+        setToast({ message: `❌ فشل الاتصال — ${errMsg}`, type: 'error' });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setToast({ message: msg.includes('timeout') || msg.includes('aborted') ? '❌ انتهت مهلة الاتصال — تحقق من الـ Token' : `❌ ${msg}`, type: 'error' });
+    }
   };
 
   return (
