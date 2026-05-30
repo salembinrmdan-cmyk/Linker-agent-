@@ -1311,26 +1311,31 @@ function CampaignsPage() {
       const apiUrl = (data.waba?.apiUrl || wabaSettings.apiUrl || 'https://gate.whapi.cloud').replace(/\/+$/, '');
       const greetingText = data.greeting || 'السلام عليكم 👋\nمعك فريق دراسة تجربة التسوق والتوصيل في اليمن 🙏\n\nحالياً نعمل دراسة بسيطة لفهم تجربة الناس مع التسوق من المواقع والتطبيقات العالمية مثل شي إن ونون وأمازون وغيرها.\n\nالاستبيان خفيف جداً وما يأخذ أكثر من دقيقتين 🌷\nوإجاباتك بتساعدنا نفهم احتياجات العملاء بشكل أفضل.\n\nهل ممكن نبدأ؟ 😊';
 
-      // Step 1: register webhook so whapi sends customer replies to our server
+      // Step 1: register webhook with whapi (correct format per official docs)
       const webhookTarget = `${window.location.origin}/api/integrations/survey-agent/webhook`;
       try {
         const wbRes = await fetch(`${apiUrl}/settings`, {
           method: 'PATCH',
           headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            webhooks: [{ url: webhookTarget, mode: 'body', events: [{ type: 'messages', method: 'post' }] }],
+            webhooks: [{
+              url: webhookTarget,
+              mode: 'body',                              // event data in request body
+              events: [{ type: 'messages', method: 'post' }],  // incoming messages
+            }],
+            callback_persist: true,                      // retry if our server is down
           }),
         });
         console.log('[campaign] webhook registered:', webhookTarget, wbRes.status);
       } catch (e) { console.warn('[campaign] webhook registration failed:', e); }
 
-      // Step 2: send greeting with interactive YES/NO buttons
+      // Step 2: send greeting with YES/NO buttons to each customer
       let sent = 0, failed = 0;
       for (let i = 0; i < validList.length; i++) {
         const c = validList[i];
         try {
-          // Try interactive buttons first (better UX - one tap to answer)
-          const interactiveRes = await fetch(`${apiUrl}/messages/interactive`, {
+          // Send interactive button message (customer taps YES → webhook receives type:"reply")
+          const r = await fetch(`${apiUrl}/messages/interactive`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1345,17 +1350,15 @@ function CampaignsPage() {
               },
             }),
           });
-
-          if (interactiveRes.ok) {
-            sent++;
-          } else {
-            // Fallback: plain text
-            const textRes = await fetch(`${apiUrl}/messages/text`, {
+          if (r.ok) { sent++; }
+          else {
+            // Fallback to plain text if interactive not supported
+            const r2 = await fetch(`${apiUrl}/messages/text`, {
               method: 'POST',
               headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
               body: JSON.stringify({ to: c.phone, body: greetingText }),
             });
-            if (textRes.ok) sent++; else { failed++; console.error('[send]', c.phone, await textRes.text()); }
+            if (r2.ok) sent++; else { failed++; console.error('[send]', c.phone, r.status); }
           }
         } catch (e) { failed++; console.error('[send err]', c.phone, e); }
         if (i < validList.length - 1) await new Promise(r => setTimeout(r, 2000 + Math.random() * 1500));
