@@ -1307,25 +1307,56 @@ function CampaignsPage() {
       const validList = data.customers || preview.recipients;
       if (!validList.length) throw new Error('لا يوجد مستلمون صالحون بعد التحقق');
 
-      const greeting = data.greeting || `مرحباً 👋
-معك فريق لينكر لوجستيكس.
-
-هل ممكن تشاركنا رأيك في تجربة الشحن؟ لا يأخذ أكثر من دقيقتين 🙏
-
-رد بـ *نعم* للبدء`;
       const apiKey = data.waba?.apiKey || wabaSettings.apiKey;
       const apiUrl = (data.waba?.apiUrl || wabaSettings.apiUrl || 'https://gate.whapi.cloud').replace(/\/+$/, '');
+      const greetingText = data.greeting || 'السلام عليكم 👋\nمعك فريق دراسة تجربة التسوق والتوصيل في اليمن 🙏\n\nحالياً نعمل دراسة بسيطة لفهم تجربة الناس مع التسوق من المواقع والتطبيقات العالمية مثل شي إن ونون وأمازون وغيرها.\n\nالاستبيان خفيف جداً وما يأخذ أكثر من دقيقتين 🌷\nوإجاباتك بتساعدنا نفهم احتياجات العملاء بشكل أفضل.\n\nهل ممكن نبدأ؟ 😊';
 
+      // Step 1: register webhook so whapi sends customer replies to our server
+      const webhookTarget = `${window.location.origin}/api/integrations/survey-agent/webhook`;
+      try {
+        const wbRes = await fetch(`${apiUrl}/settings`, {
+          method: 'PATCH',
+          headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            webhooks: [{ url: webhookTarget, mode: 'body', events: [{ type: 'messages', method: 'post' }] }],
+          }),
+        });
+        console.log('[campaign] webhook registered:', webhookTarget, wbRes.status);
+      } catch (e) { console.warn('[campaign] webhook registration failed:', e); }
+
+      // Step 2: send greeting with interactive YES/NO buttons
       let sent = 0, failed = 0;
       for (let i = 0; i < validList.length; i++) {
         const c = validList[i];
         try {
-          const r = await fetch(`${apiUrl}/messages/text`, {
+          // Try interactive buttons first (better UX - one tap to answer)
+          const interactiveRes = await fetch(`${apiUrl}/messages/interactive`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ to: c.phone, body: greeting.replace('{name}', c.name || '') }),
+            body: JSON.stringify({
+              to: c.phone,
+              type: 'button',
+              body: { text: greetingText },
+              action: {
+                buttons: [
+                  { type: 'reply', reply: { id: 'survey_yes', title: 'نعم، أبدأ 😊' } },
+                  { type: 'reply', reply: { id: 'survey_later', title: 'لاحقاً' } },
+                ],
+              },
+            }),
           });
-          if (r.ok) sent++; else { failed++; console.error('[send]', c.phone, r.status); }
+
+          if (interactiveRes.ok) {
+            sent++;
+          } else {
+            // Fallback: plain text
+            const textRes = await fetch(`${apiUrl}/messages/text`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ to: c.phone, body: greetingText }),
+            });
+            if (textRes.ok) sent++; else { failed++; console.error('[send]', c.phone, await textRes.text()); }
+          }
         } catch (e) { failed++; console.error('[send err]', c.phone, e); }
         if (i < validList.length - 1) await new Promise(r => setTimeout(r, 2000 + Math.random() * 1500));
       }
